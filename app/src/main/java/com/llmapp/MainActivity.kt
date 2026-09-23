@@ -123,8 +123,7 @@ private fun ChatScreen(engine:Engine,logDir:File){
                     try { entry.createNewFile() } catch (_:Throwable) {}
                     try{
                         engine.startEntryLog(entry.absolutePath)
-                        Toast.makeText(context,"Arquivo de log criado em:\n${entry.absolutePath}",Toast.LENGTH_LONG).show()
-                        engine.log("[ui] send prompt length=${prompt.length}")
+                        launch(Dispatchers.Main) {\n                            Toast.makeText(context,"Arquivo de log criado em:\n${entry.absolutePath}",Toast.LENGTH_LONG).show()\n                        }\n                        engine.log("[ui] send prompt length=${prompt.length}")
                         val ok=engine.generate(prompt,TokenCallback{token->scope.launch(Dispatchers.Main){current+=token}})
                         engine.log("[ui] generate returned=$ok")
                         launch(Dispatchers.Main){
