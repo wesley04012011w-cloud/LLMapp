@@ -2,6 +2,8 @@ package com.llmapp
 
 import android.os.Bundle
 import android.net.Uri
+import android.os.Environment
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -39,10 +41,13 @@ private fun interface TokenCallback { fun onToken(text:String) }
 class MainActivity:ComponentActivity(){
     private val engine by lazy { Engine() }
     private lateinit var logDir:File
+    private lateinit var logDirPath:String
 
     override fun onCreate(state:Bundle?){
         super.onCreate(state)
-        logDir=File(filesDir,"LLMapp-LOGS").apply{mkdirs()}
+        logDir=File(getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS),"LLMapp-LOGS").apply{mkdirs()}
+        logDirPath=logDir.absolutePath
+        Toast.makeText(this,"Logs do LLMapp serão salvos em:\n$logDirPath",Toast.LENGTH_LONG).show()
         engine.initLogs(logDir.absolutePath)
 
         val previous=Thread.getDefaultUncaughtExceptionHandler()
@@ -115,8 +120,10 @@ private fun ChatScreen(engine:Engine,logDir:File){
                 input="";messages.add(Message(true,prompt));current="";generating=true
                 scope.launch(Dispatchers.IO){
                     val entry=File(logDir,"entry-${timestamp()}.txt")
+                    try { entry.createNewFile() } catch (_:Throwable) {}
                     try{
                         engine.startEntryLog(entry.absolutePath)
+                        Toast.makeText(context,"Arquivo de log criado em:\n${entry.absolutePath}",Toast.LENGTH_LONG).show()
                         engine.log("[ui] send prompt length=${prompt.length}")
                         val ok=engine.generate(prompt,TokenCallback{token->scope.launch(Dispatchers.Main){current+=token}})
                         engine.log("[ui] generate returned=$ok")
