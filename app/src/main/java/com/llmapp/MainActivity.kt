@@ -18,11 +18,17 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 private data class Message(val user:Boolean,val text:String)
 
 private class Engine {
     init { System.loadLibrary("llmapp") }
+    external fun initLogs(directory:String)
+    external fun startEntryLog(path:String)
+    external fun log(message:String)
     external fun loadModel(path:String):Boolean
     external fun generate(prompt:String,callback:TokenCallback):Boolean
     external fun stop()
@@ -32,31 +38,73 @@ private fun interface TokenCallback { fun onToken(text:String) }
 
 class MainActivity:ComponentActivity(){
     private val engine by lazy { Engine() }
-    override fun onCreate(state:Bundle?){super.onCreate(state);setContent{MaterialTheme(colorScheme=darkColorScheme(background=Color(0xFF0B0B0C),surface=Color(0xFF151517),onBackground=Color(0xFFE8E8E8),onSurface=Color(0xFFE8E8E8))){ChatScreen(engine)}}}
+    private lateinit var logDir:File
+
+    override fun onCreate(state:Bundle?){
+        super.onCreate(state)
+        logDir=File(filesDir,"LLMapp-LOGS").apply{mkdirs()}
+        engine.initLogs(logDir.absolutePath)
+
+        val previous=Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler{thread,error->
+            try{
+                File(logDir,"crash-${timestamp()}.txt").writeText(
+                    "========== JAVA/KOTLIN CRASH ==========\n"+
+                    "thread=${thread.name}\n"+
+                    error.stackTraceToString()
+                )
+            }catch(_:Throwable){}
+            previous?.uncaughtException(thread,error)
+        }
+
+        setContent{
+            MaterialTheme(colorScheme=darkColorScheme(
+                background=Color(0xFF0B0B0C),surface=Color(0xFF151517),
+                onBackground=Color(0xFFE8E8E8),onSurface=Color(0xFFE8E8E8)
+            )){ChatScreen(engine,logDir)}
+        }
+    }
     override fun onDestroy(){engine.stop();engine.unload();super.onDestroy()}
 }
 
+private fun timestamp():String=SimpleDateFormat("yyyyMMdd-HHmmss-SSS",Locale.US).format(Date())
+
 @Composable
-private fun ChatScreen(engine:Engine){
+private fun ChatScreen(engine:Engine,logDir:File){
     val context=androidx.compose.ui.platform.LocalContext.current
     val scope=rememberCoroutineScope()
     val messages=remember{mutableStateListOf<Message>()}
-    var input by remember{mutableStateOf("")}; var loaded by remember{mutableStateOf(false)}
-    var generating by remember{mutableStateOf(false)}; var current by remember{mutableStateOf("")}
+    var input by remember{mutableStateOf("")}
+    var loaded by remember{mutableStateOf(false)}
+    var generating by remember{mutableStateOf(false)}
+    var current by remember{mutableStateOf("")}
     val list=rememberLazyListState()
-    val picker=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()){uri:Uri? ->
-        uri ?: return@rememberLauncherForActivityResult
+
+    val picker=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()){uri:Uri?->
+        uri?:return@rememberLauncherForActivityResult
         scope.launch(Dispatchers.IO){
-            val file=File(context.filesDir,"model.gguf")
-            context.contentResolver.openInputStream(uri)?.use{ins->file.outputStream().use{outs->ins.copyTo(outs,1024*1024)}}
-            val ok=engine.loadModel(file.absolutePath)
-            launch(Dispatchers.Main){loaded=ok;if(!ok)messages.add(Message(false,"Falha ao carregar o modelo."))}
+            try{
+                val file=File(context.filesDir,"model.gguf")
+                engine.log("[ui] copying model")
+                context.contentResolver.openInputStream(uri)?.use{ins->file.outputStream().use{outs->ins.copyTo(outs,1024*1024)}}
+                    ?:throw IllegalStateException("Could not open selected model")
+                engine.log("[ui] model bytes=${file.length()}")
+                val ok=engine.loadModel(file.absolutePath)
+                launch(Dispatchers.Main){loaded=ok;if(!ok)messages.add(Message(false,"Falha ao carregar o modelo."))}
+            }catch(t:Throwable){
+                engine.log("[ui] load exception: ${t.stackTraceToString()}")
+                launch(Dispatchers.Main){loaded=false;messages.add(Message(false,"Falha ao carregar o modelo."))}
+            }
         }
     }
+
     LaunchedEffect(messages.size,current){if(messages.isNotEmpty())list.animateScrollToItem(messages.lastIndex)}
+
     Column(Modifier.fillMaxSize().padding(12.dp)){
         LazyColumn(Modifier.weight(1f).fillMaxWidth(),state=list,verticalArrangement=Arrangement.spacedBy(10.dp),contentPadding=PaddingValues(vertical=12.dp)){
-            items(messages){m->Row(Modifier.fillMaxWidth(),horizontalArrangement=if(m.user)Arrangement.End else Arrangement.Start){Surface(shape=RoundedCornerShape(18.dp),color=if(m.user)Color(0xFF242427) else Color(0xFF151517)){Text(m.text,Modifier.padding(14.dp))}}}
+            items(messages){m->Row(Modifier.fillMaxWidth(),horizontalArrangement=if(m.user)Arrangement.End else Arrangement.Start){
+                Surface(shape=RoundedCornerShape(18.dp),color=if(m.user)Color(0xFF242427)else Color(0xFF151517)){Text(m.text,Modifier.padding(14.dp))}
+            }}
             if(current.isNotEmpty())item{Surface(shape=RoundedCornerShape(18.dp),color=Color(0xFF151517)){Text(current,Modifier.padding(14.dp))}}
         }
         Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)){
@@ -66,8 +114,21 @@ private fun ChatScreen(engine:Engine){
                 val prompt=input.trim();if(prompt.isEmpty()||!loaded)return@Button
                 input="";messages.add(Message(true,prompt));current="";generating=true
                 scope.launch(Dispatchers.IO){
-                    val ok=engine.generate(prompt,TokenCallback{token->scope.launch(Dispatchers.Main){current+=token}})
-                    launch(Dispatchers.Main){if(current.isNotEmpty())messages.add(Message(false,current));current="";generating=false;if(!ok)messages.add(Message(false,"Geração interrompida ou falhou."))}
+                    val entry=File(logDir,"entry-${timestamp()}.txt")
+                    try{
+                        engine.startEntryLog(entry.absolutePath)
+                        engine.log("[ui] send prompt length=${prompt.length}")
+                        val ok=engine.generate(prompt,TokenCallback{token->scope.launch(Dispatchers.Main){current+=token}})
+                        engine.log("[ui] generate returned=$ok")
+                        launch(Dispatchers.Main){
+                            if(current.isNotEmpty())messages.add(Message(false,current))
+                            current="";generating=false
+                            if(!ok)messages.add(Message(false,"Geração interrompida ou falhou."))
+                        }
+                    }catch(t:Throwable){
+                        try{engine.log("[ui] generate exception: ${t.stackTraceToString()}")}catch(_:Throwable){}
+                        launch(Dispatchers.Main){current="";generating=false;messages.add(Message(false,"Erro durante a geração."))}
+                    }
                 }
             },enabled=loaded||generating,modifier=Modifier.height(56.dp)){Text(if(generating)"Pausar" else "Enviar")}
             OutlinedButton(onClick={picker.launch(arrayOf("application/octet-stream","application/x-gguf","*/*"))},enabled=!generating,modifier=Modifier.height(56.dp)){Text("Carregar modelo")}
