@@ -1,6 +1,7 @@
 #include <jni.h>
 #include <android/log.h>
 #include <atomic>
+#include <algorithm>
 #include <mutex>
 #include <string>
 #include <thread>
