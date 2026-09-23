@@ -42,13 +42,30 @@ class MainActivity:ComponentActivity(){
     private val engine by lazy { Engine() }
     private lateinit var logDir:File
     private lateinit var logDirPath:String
+    private lateinit var sessionLog:File
 
     override fun onCreate(state:Bundle?){
         super.onCreate(state)
         logDir=File(getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS),"LLMapp-LOGS").apply{mkdirs()}
         logDirPath=logDir.absolutePath
+
+        val previousSession=File(logDir,"session-active.txt")
+        if(previousSession.exists() && previousSession.length()>0){
+            val recovered=File(logDir,"crash-recovered-${timestamp()}.txt")
+            try{
+                previousSession.renameTo(recovered)
+                Toast.makeText(this,"Falha da sessão anterior registrada em:\n${recovered.absolutePath}",Toast.LENGTH_LONG).show()
+            }catch(_:Throwable){}
+        }
+
+        sessionLog=File(logDir,"session-active.txt")
+        try{
+            sessionLog.writeText("========== SESSION START ==========\nstarted=${Date()}\n")
+        }catch(_:Throwable){}
         Toast.makeText(this,"Logs do LLMapp serão salvos em:\n$logDirPath",Toast.LENGTH_LONG).show()
         engine.initLogs(logDir.absolutePath)
+        engine.startEntryLog(sessionLog.absolutePath)
+        engine.log("[ui] session started")
 
         val previous=Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler{thread,error->
@@ -69,7 +86,19 @@ class MainActivity:ComponentActivity(){
             )){ChatScreen(engine,logDir)}
         }
     }
-    override fun onDestroy(){engine.stop();engine.unload();super.onDestroy()}
+    override fun onDestroy(){
+        try{
+            engine.log("[ui] activity destroyed")
+            if(!isChangingConfigurations){
+                engine.log("[ui] clean shutdown")
+                sessionLog.appendText("========== CLEAN SHUTDOWN ==========\n")
+                sessionLog.delete()
+            }
+        }catch(_:Throwable){}
+        engine.stop()
+        engine.unload()
+        super.onDestroy()
+    }
 }
 
 private fun timestamp():String=SimpleDateFormat("yyyyMMdd-HHmmss-SSS",Locale.US).format(Date())
@@ -119,12 +148,9 @@ private fun ChatScreen(engine:Engine,logDir:File){
                 val prompt=input.trim();if(prompt.isEmpty()||!loaded)return@Button
                 input="";messages.add(Message(true,prompt));current="";generating=true
                 scope.launch(Dispatchers.IO){
-                    val entry=File(logDir,"entry-${timestamp()}.txt")
-                    try { entry.createNewFile() } catch (_:Throwable) {}
                     try{
-                        engine.startEntryLog(entry.absolutePath)
-                        launch(Dispatchers.Main) {\n                            Toast.makeText(context,"Arquivo de log criado em:\n${entry.absolutePath}",Toast.LENGTH_LONG).show()\n                        }\n                        engine.log("[ui] send prompt length=${prompt.length}")
-                        val ok=engine.generate(prompt,TokenCallback{token->scope.launch(Dispatchers.Main){current+=token}})
+                        engine.log("========== NEW ENTRY ========== ")
+                        engine.log("[ui] send prompt length=${prompt.length}")
                         engine.log("[ui] generate returned=$ok")
                         launch(Dispatchers.Main){
                             if(current.isNotEmpty())messages.add(Message(false,current))
