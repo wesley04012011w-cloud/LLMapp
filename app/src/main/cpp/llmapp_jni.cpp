@@ -1,5 +1,10 @@
 #include <jni.h>
 #include <android/log.h>
+#include <cstdarg>
+#include <cstdio>
+#include <fcntl.h>
+#include <signal.h>
+#include <unistd.h>
 #include <atomic>
 #include <algorithm>
 #include <mutex>
@@ -16,6 +21,41 @@ static std::vector<llama_token> g_cached_tokens;
 static std::vector<std::pair<std::string, std::string>> g_history;
 static std::mutex g_mutex;
 static std::atomic_bool g_stop{false};
+static bool g_backend_ready=false;
+static std::mutex g_log_mutex;
+static std::string g_current_log;
+
+static void append_file(const char *path,const char *data,size_t len){
+    if(!path||!*path||!data||!len)return;
+    int fd=open(path,O_WRONLY|O_CREAT|O_APPEND,0600);
+    if(fd<0)return;
+    size_t off=0;
+    while(off<len){ssize_t n=write(fd,data+off,len-off);if(n<=0)break;off+=(size_t)n;}
+    close(fd);
+}
+static void native_log(const char *fmt,...){
+    char buf[2048];
+    va_list ap;va_start(ap,fmt);
+    int n=vsnprintf(buf,sizeof(buf),fmt,ap);
+    va_end(ap);
+    if(n<0)return;
+    size_t len=(size_t)std::min(n,(int)sizeof(buf)-1);
+    __android_log_write(ANDROID_LOG_ERROR,"LLMapp",buf);
+    std::lock_guard<std::mutex> lock(g_log_mutex);
+    if(!g_current_log.empty()){append_file(g_current_log.c_str(),buf,len);append_file(g_current_log.c_str(),"\n",1);}
+}
+static void crash_handler(int sig){
+    if(!g_current_log.empty()){
+        const char *msg="\n========== NATIVE CRASH ==========
+signal received; process crashed in native code.\n";
+        append_file(g_current_log.c_str(),msg,strlen(msg));
+    }
+    signal(sig,SIG_DFL);raise(sig);
+}
+static void install_crash_handlers(){
+    static std::once_flag once;
+    std::call_once(once,[]{signal(SIGSEGV,crash_handler);signal(SIGABRT,crash_handler);signal(SIGBUS,crash_handler);signal(SIGILL,crash_handler);signal(SIGFPE,crash_handler);});
+}
 
 static void clear_engine() {
     if (g_sampler) { llama_sampler_free(g_sampler); g_sampler = nullptr; }
@@ -104,6 +144,30 @@ static jstring utf8_to_jstring(JNIEnv *env, const char *data, size_t len) {
         i += need;
     }
     return env->NewString(out.data(), (jsize)out.size());
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_llmapp_Engine_initLogs(JNIEnv* env,jobject,jstring jdir){
+    if(!jdir)return;
+    const char *p=env->GetStringUTFChars(jdir,nullptr); if(!p)return;
+    {std::lock_guard<std::mutex> lock(g_log_mutex); g_current_log=std::string(p)+"/startup.txt";}
+    env->ReleaseStringUTFChars(jdir,p);
+    install_crash_handlers();
+    native_log("[startup] native logger initialized");
+}
+extern "C" JNIEXPORT void JNICALL
+Java_com_llmapp_Engine_startEntryLog(JNIEnv* env,jobject,jstring jpath){
+    if(!jpath)return;
+    const char *p=env->GetStringUTFChars(jpath,nullptr); if(!p)return;
+    {std::lock_guard<std::mutex> lock(g_log_mutex); g_current_log=p;}
+    env->ReleaseStringUTFChars(jpath,p);
+    native_log("========== NEW ENTRY ==========");
+}
+extern "C" JNIEXPORT void JNICALL
+Java_com_llmapp_Engine_log(JNIEnv* env,jobject,jstring jmsg){
+    if(!jmsg)return;
+    const char *p=env->GetStringUTFChars(jmsg,nullptr); if(!p)return;
+    native_log("%s",p); env->ReleaseStringUTFChars(jmsg,p);
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
