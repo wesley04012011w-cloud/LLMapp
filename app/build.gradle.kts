@@ -6,6 +6,7 @@ plugins {
 android {
     namespace="com.llmapp"
     compileSdk=35
+    ndkVersion="27.2.12479018"
     defaultConfig {
         applicationId="com.llmapp"
         minSdk=28
@@ -16,6 +17,13 @@ android {
         externalNativeBuild { cmake { cppFlags += listOf("-O3","-ffast-math","-fno-math-errno","-fno-signed-zeros","-ffp-contract=fast") } }
     }
     buildTypes { release { isMinifyEnabled=true; proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"),"proguard-rules.pro") } }
+    compileOptions {
+        sourceCompatibility=JavaVersion.VERSION_17
+        targetCompatibility=JavaVersion.VERSION_17
+    }
+    kotlin {
+        jvmToolchain(17)
+    }
     externalNativeBuild { cmake { path=file("src/main/cpp/CMakeLists.txt"); version="3.30.5" } }
     packaging { jniLibs.useLegacyPackaging=true }
 }
