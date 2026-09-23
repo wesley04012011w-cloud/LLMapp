@@ -46,8 +46,7 @@ static void native_log(const char *fmt,...){
 }
 static void crash_handler(int sig){
     if(!g_current_log.empty()){
-        const char *msg="\n========== NATIVE CRASH ==========
-signal received; process crashed in native code.\n";
+        const char *msg="\n========== NATIVE CRASH ==========\\nsignal received; process crashed in native code.\\n";
         append_file(g_current_log.c_str(),msg,strlen(msg));
     }
     signal(sig,SIG_DFL);raise(sig);
