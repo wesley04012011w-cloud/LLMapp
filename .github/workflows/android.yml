@@ -59,14 +59,36 @@ jobs:
       - name: Build APK
         run: gradle --no-daemon :app:assembleRelease
 
-      - name: Locate APK
+      - name: Generate and sign release APK
         run: |
-          echo "APK files:"
-          find app/build/outputs/apk -type f -name "*.apk" -print
-          test -n "$(find app/build/outputs/apk -type f -name "*.apk" -print -quit)"
+          set -euo pipefail
+          KEYSTORE="$RUNNER_TEMP/llmapp-release.jks"
+          PASS="$(openssl rand -hex 32)"
+          APK="$(find app/build/outputs/apk -type f -name "*.apk" -print -quit)"
+          test -n "$APK"
+
+          keytool -genkeypair -noprompt \
+            -keystore "$KEYSTORE" \
+            -storepass "$PASS" \
+            -keypass "$PASS" \
+            -alias llmapp \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=LLMapp, OU=CI, O=LLMapp, C=BR"
+
+          ZIPALIGN="$ANDROID_HOME/build-tools/35.0.0/zipalign"
+          APKSIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          SIGNED="app/build/outputs/apk/release/app-release.apk"
+
+          "$ZIPALIGN" -f 4 "$APK" "$RUNNER_TEMP/aligned.apk"
+          "$APKSIGNER" sign --ks "$KEYSTORE" --ks-pass "pass:$PASS" --key-pass "pass:$PASS" --ks-key-alias llmapp --out "$SIGNED" "$RUNNER_TEMP/aligned.apk"
+          "$APKSIGNER" verify --verbose "$SIGNED"
+
+          rm -f "$APK" "$RUNNER_TEMP/aligned.apk"
+          echo "Signed APK: $SIGNED"
+          ls -lh "$SIGNED"
 
       - uses: actions/upload-artifact@v4
         with:
           name: LLMapp-1.0.0
-          path: app/build/outputs/apk/release/*.apk
+          path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
