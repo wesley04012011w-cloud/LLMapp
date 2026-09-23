@@ -1,0 +1,2 @@
+-keep class com.llmapp.Engine { *; }
+-keep class com.llmapp.TokenCallback { *; }
