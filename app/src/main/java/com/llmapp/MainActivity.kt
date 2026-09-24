@@ -1,5 +1,7 @@
 package com.llmapp
 
+import android.app.ActivityManager
+import android.os.Build
 import android.os.Bundle
 import android.net.Uri
 import android.os.Environment
@@ -53,8 +55,9 @@ class MainActivity:ComponentActivity(){
         if(previousSession.exists() && previousSession.length()>0){
             val recovered=File(logDir,"crash-recovered-${timestamp()}.txt")
             try{
-                previousSession.renameTo(recovered)
-                Toast.makeText(this,"Falha da sessão anterior registrada em:\n${recovered.absolutePath}",Toast.LENGTH_LONG).show()
+                if(previousSession.renameTo(recovered)){
+                    Toast.makeText(this,"Falha da sessão anterior registrada em:\n${recovered.absolutePath}",Toast.LENGTH_LONG).show()
+                }
             }catch(_:Throwable){}
         }
 
@@ -66,6 +69,7 @@ class MainActivity:ComponentActivity(){
         engine.initLogs(logDir.absolutePath)
         engine.startEntryLog(sessionLog.absolutePath)
         engine.log("[ui] session started")
+        recordPreviousProcessExit()
 
         val previous=Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler{thread,error->
@@ -102,6 +106,31 @@ class MainActivity:ComponentActivity(){
 }
 
 private fun timestamp():String=SimpleDateFormat("yyyyMMdd-HHmmss-SSS",Locale.US).format(Date())
+
+private fun MainActivity.recordPreviousProcessExit(){
+    if(Build.VERSION.SDK_INT<30)return
+    try{
+        val am=getSystemService(ActivityManager::class.java)
+        val exits=am.getHistoricalProcessExitReasons(packageName,0,5)
+        if(exits.isEmpty())return
+        val latest=exits.first()
+        val now=System.currentTimeMillis()
+        if(now-latest.timestamp<10*60*1000L){
+            engine.log("[exit] reason=${latest.reason} status=${latest.status} pss=${latest.pss}KB rss=${latest.rss}KB desc=${latest.description ?: ""}")
+            if(latest.reason==android.app.ApplicationExitInfo.REASON_CRASH_NATIVE){
+                engine.log("[exit] previous process died from NATIVE CRASH")
+            }else if(latest.reason==android.app.ApplicationExitInfo.REASON_CRASH){
+                engine.log("[exit] previous process died from JAVA/KOTLIN CRASH")
+            }else if(latest.reason==android.app.ApplicationExitInfo.REASON_ANR){
+                engine.log("[exit] previous process died from ANR")
+            }else if(latest.reason==android.app.ApplicationExitInfo.REASON_LOW_MEMORY){
+                engine.log("[exit] previous process was killed by LOW MEMORY")
+            }
+        }
+    }catch(t:Throwable){
+        try{engine.log("[exit] diagnostic failed: ${t.stackTraceToString()}")}catch(_:Throwable){}
+    }
+}
 
 @Composable
 private fun ChatScreen(engine:Engine,logDir:File){
@@ -149,8 +178,11 @@ private fun ChatScreen(engine:Engine,logDir:File){
                 input="";messages.add(Message(true,prompt));current="";generating=true
                 scope.launch(Dispatchers.IO){
                     try{
-                        engine.log("========== NEW ENTRY ========== ")
+                        engine.log("========== NEW ENTRY ==========")
                         engine.log("[ui] send prompt length=${prompt.length}")
+                        val ok=engine.generate(prompt,TokenCallback{token->
+                            scope.launch(Dispatchers.Main){current+=token}
+                        })
                         engine.log("[ui] generate returned=$ok")
                         launch(Dispatchers.Main){
                             if(current.isNotEmpty())messages.add(Message(false,current))
