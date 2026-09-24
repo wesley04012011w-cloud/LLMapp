@@ -259,6 +259,7 @@ private fun ChatScreen(engine:Engine,logDir:File){ // generation settings sheet 
                     }
                 }
             }
+        }
         val sendEnabled=generating || (loaded && input.isNotBlank())
         TextField(
             value=input,
