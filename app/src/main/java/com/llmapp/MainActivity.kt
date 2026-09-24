@@ -13,6 +13,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.material.icons.Icons
@@ -143,6 +144,7 @@ private fun timestamp():String=SimpleDateFormat("yyyyMMdd-HHmmss-SSS",Locale.US)
 
 
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ChatScreen(engine:Engine,logDir:File){
     val context=androidx.compose.ui.platform.LocalContext.current
