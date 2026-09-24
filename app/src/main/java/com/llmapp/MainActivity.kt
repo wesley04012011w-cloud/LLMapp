@@ -170,7 +170,10 @@ private fun ChatScreen(engine:Engine,logDir:File){
         }
     }
 
-    LaunchedEffect(messages.size,current,thinking){if(messages.isNotEmpty())list.animateScrollToItem(messages.lastIndex)}
+    LaunchedEffect(messages.size,current,thinking,thinkingActive){
+        val last = list.layoutInfo.totalItemsCount - 1
+        if(last >= 0) list.scrollToItem(last)
+    }
 
     Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(12.dp)){
         LazyColumn(Modifier.weight(1f).fillMaxWidth(),state=list,verticalArrangement=Arrangement.spacedBy(10.dp),contentPadding=PaddingValues(vertical=12.dp)){
@@ -182,7 +185,7 @@ private fun ChatScreen(engine:Engine,logDir:File){
                     Column(Modifier.padding(14.dp)){
                         Text(if(thinkingActive)"Pensando..." else "Pensamento",style=MaterialTheme.typography.labelMedium,color=Color(0xFFBDBDBD))
                         Spacer(Modifier.height(6.dp))
-                        Text(thinking)
+                        Text(thinking,color=Color.White,style=MaterialTheme.typography.bodyMedium)
                     }
                 }
             }
@@ -213,9 +216,15 @@ private fun ChatScreen(engine:Engine,logDir:File){
                                             streamBuffer = streamBuffer.substring(idx + tag.length)
                                             thinkingActive = true
                                             again = true
-                                        }else if(streamBuffer.length > 64){
-                                            current += streamBuffer.dropLast(32)
-                                            streamBuffer = streamBuffer.takeLast(32)
+                                        }else{
+                                            val keep = starts.maxOfOrNull { tag ->
+                                                val max = minOf(tag.length - 1, streamBuffer.length)
+                                                (0..max).lastOrNull { n -> streamBuffer.endsWith(tag.take(n)) } ?: 0
+                                            } ?: 0
+                                            if(streamBuffer.length > keep){
+                                                current += streamBuffer.dropLast(keep)
+                                                streamBuffer = if(keep == 0) "" else streamBuffer.takeLast(keep)
+                                            }
                                         }
                                     }else if(thinkingActive){
                                         val ends = listOf("</think>", "<|/think|>", "<|END_THINKING|>", "<|channel|>final", "[/THINK]", "[BEGIN FINAL RESPONSE]")
@@ -227,9 +236,15 @@ private fun ChatScreen(engine:Engine,logDir:File){
                                             thinkingActive = false
                                             thinkingDone = true
                                             again = true
-                                        }else if(streamBuffer.length > 64){
-                                            thinking += streamBuffer.dropLast(32)
-                                            streamBuffer = streamBuffer.takeLast(32)
+                                        }else{
+                                            val keep = ends.maxOfOrNull { tag ->
+                                                val max = minOf(tag.length - 1, streamBuffer.length)
+                                                (0..max).lastOrNull { n -> streamBuffer.endsWith(tag.take(n)) } ?: 0
+                                            } ?: 0
+                                            if(streamBuffer.length > keep){
+                                                thinking += streamBuffer.dropLast(keep)
+                                                streamBuffer = if(keep == 0) "" else streamBuffer.takeLast(keep)
+                                            }
                                         }
                                     }else{
                                         current += streamBuffer
