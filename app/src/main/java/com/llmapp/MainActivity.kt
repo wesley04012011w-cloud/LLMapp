@@ -145,7 +145,7 @@ private fun timestamp():String=SimpleDateFormat("yyyyMMdd-HHmmss-SSS",Locale.US)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ChatScreen(engine:Engine,logDir:File){
+private fun ChatScreen(engine:Engine,logDir:File){ // generation settings sheet is opted into Material3 experimental API
     val context=androidx.compose.ui.platform.LocalContext.current
     val scope=rememberCoroutineScope()
     val messages=remember{mutableStateListOf<Message>()}
