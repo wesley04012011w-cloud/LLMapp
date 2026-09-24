@@ -10,6 +10,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -48,6 +49,8 @@ class MainActivity:ComponentActivity(){
 
     override fun onCreate(state:Bundle?){
         super.onCreate(state)
+        enableEdgeToEdge()
+        window.isNavigationBarContrastEnforced = true
         logDir=File(getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS),"LLMapp-LOGS").apply{mkdirs()}
         logDirPath=logDir.absolutePath
 
@@ -165,7 +168,7 @@ private fun ChatScreen(engine:Engine,logDir:File){
 
     LaunchedEffect(messages.size,current){if(messages.isNotEmpty())list.animateScrollToItem(messages.lastIndex)}
 
-    Column(Modifier.fillMaxSize().padding(12.dp)){
+    Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(12.dp)){
         LazyColumn(Modifier.weight(1f).fillMaxWidth(),state=list,verticalArrangement=Arrangement.spacedBy(10.dp),contentPadding=PaddingValues(vertical=12.dp)){
             items(messages){m->Row(Modifier.fillMaxWidth(),horizontalArrangement=if(m.user)Arrangement.End else Arrangement.Start){
                 Surface(shape=RoundedCornerShape(18.dp),color=if(m.user)Color(0xFF242427)else Color(0xFF151517)){Text(m.text,Modifier.padding(14.dp))}
