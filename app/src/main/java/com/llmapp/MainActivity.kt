@@ -177,6 +177,15 @@ private fun ChatScreen(engine:Engine,logDir:File){
             items(messages){m->Row(Modifier.fillMaxWidth(),horizontalArrangement=if(m.user)Arrangement.End else Arrangement.Start){
                 Surface(shape=RoundedCornerShape(18.dp),color=if(m.user)Color(0xFF242427)else Color(0xFF151517)){Text(m.text,Modifier.padding(14.dp))}
             }}
+            if(thinking.isNotEmpty())item{
+                Surface(shape=RoundedCornerShape(18.dp),color=Color(0xFF101012)){
+                    Column(Modifier.padding(14.dp)){
+                        Text(if(thinkingActive)"Pensando..." else "Pensamento",style=MaterialTheme.typography.labelMedium)
+                        Spacer(Modifier.height(6.dp))
+                        Text(thinking)
+                    }
+                }
+            }
             if(current.isNotEmpty())item{Surface(shape=RoundedCornerShape(18.dp),color=Color(0xFF151517)){Text(current,Modifier.padding(14.dp))}}
         }
         Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)){
@@ -234,7 +243,6 @@ private fun ChatScreen(engine:Engine,logDir:File){
                             current += streamBuffer
                             streamBuffer = ""
                             if(thinkingActive) thinkingActive = false
-                            if(thinking.isNotEmpty()) messages.add(Message(false,"THINKING::"+thinking))
                             if(current.isNotEmpty())messages.add(Message(false,current))
                             thinking=""; thinkingActive=false; thinkingDone=false
                             current="";generating=false
