@@ -255,12 +255,12 @@ private fun ChatScreen(engine:Engine,logDir:File){
                         })
                         engine.log("[ui] generate returned=$ok")
                         launch(Dispatchers.Main){
-                            current += streamBuffer
+                            if(thinkingActive) thinking += streamBuffer else current += streamBuffer
                             streamBuffer = ""
-                            if(thinkingActive) thinkingActive = false
+                            thinkingActive = false
                             if(current.isNotEmpty())messages.add(Message(false,current))
-                            thinking=""; thinkingActive=false; thinkingDone=false
-                            current="";generating=false
+                            current=""
+                            generating=false
                             if(!ok)messages.add(Message(false,"Geração interrompida ou falhou."))
                         }
                     }catch(t:Throwable){
