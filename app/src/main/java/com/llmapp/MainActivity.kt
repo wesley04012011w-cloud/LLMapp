@@ -90,24 +90,7 @@ class MainActivity:ComponentActivity(){
             )){ChatScreen(engine,logDir)}
         }
     }
-    override fun onDestroy(){
-        try{
-            engine.log("[ui] activity destroyed")
-            if(!isChangingConfigurations){
-                engine.log("[ui] clean shutdown")
-                sessionLog.appendText("========== CLEAN SHUTDOWN ==========\n")
-                sessionLog.delete()
-            }
-        }catch(_:Throwable){}
-        engine.stop()
-        engine.unload()
-        super.onDestroy()
-    }
-}
-
-private fun timestamp():String=SimpleDateFormat("yyyyMMdd-HHmmss-SSS",Locale.US).format(Date())
-
-private fun MainActivity.recordPreviousProcessExit(){
+    private fun recordPreviousProcessExit(){
     if(Build.VERSION.SDK_INT<30)return
     try{
         val am=getSystemService(ActivityManager::class.java)
@@ -131,6 +114,25 @@ private fun MainActivity.recordPreviousProcessExit(){
         try{engine.log("[exit] diagnostic failed: ${t.stackTraceToString()}")}catch(_:Throwable){}
     }
 }
+
+    override fun onDestroy(){
+        try{
+            engine.log("[ui] activity destroyed")
+            if(!isChangingConfigurations){
+                engine.log("[ui] clean shutdown")
+                sessionLog.appendText("========== CLEAN SHUTDOWN ==========\n")
+                sessionLog.delete()
+            }
+        }catch(_:Throwable){}
+        engine.stop()
+        engine.unload()
+        super.onDestroy()
+    }
+}
+
+private fun timestamp():String=SimpleDateFormat("yyyyMMdd-HHmmss-SSS",Locale.US).format(Date())
+
+
 
 @Composable
 private fun ChatScreen(engine:Engine,logDir:File){
