@@ -178,7 +178,12 @@ private fun ChatScreen(engine:Engine,logDir:File){
         if(generating){
             withFrameNanos{}
             val last=list.layoutInfo.totalItemsCount-1
-            if(last>=0)list.scrollToItem(last)
+            if(last>=0){
+                // Keep the newest streaming item anchored to the bottom.
+                // A large positive offset moves the item upward until its
+                // bottom edge reaches the viewport bottom.
+                list.scrollToItem(last,1_000_000)
+            }
         }
     }
 

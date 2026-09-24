@@ -82,6 +82,29 @@ static std::vector<llama_token> tokenize(const llama_vocab *vocab, const std::st
 }
 
 static std::string format_chat() {
+    const char *tmpl = llama_model_chat_template(g_model, nullptr);
+
+    // Some recent GGUF templates (notably Qwen3.5) are full Jinja templates.
+    // The low-level C helper may reject them even though the model carries a
+    // valid template in metadata.  Fall back to their standard im_start form
+    // instead of sending a plain "User:/Assistant:" prompt to the model.
+    if (tmpl && std::strstr(tmpl, "<|im_start|>")) {
+        std::string fallback;
+        fallback.reserve(1024);
+        for (const auto &m : g_history) {
+            fallback += "<|im_start|>";
+            fallback += m.first;
+            fallback += "\n";
+            fallback += m.second;
+            fallback += "<|im_end|>\n";
+        }
+        fallback += "<|im_start|>assistant\n";
+        if (std::strstr(tmpl, "<think>")) {
+            fallback += "<think>\n";
+        }
+        return fallback;
+    }
+
     std::string fallback;
     fallback.reserve(1024);
     for (const auto &m : g_history) {
@@ -91,7 +114,6 @@ static std::string format_chat() {
     }
     fallback += "Assistant: ";
 
-    const char *tmpl = llama_model_chat_template(g_model, nullptr);
     if (!tmpl) return fallback;
 
     std::vector<llama_chat_message> msgs;
@@ -243,6 +265,43 @@ Java_com_llmapp_Engine_loadModel(JNIEnv *env, jobject, jstring jpath) {
     llama_sampler_chain_add(g_sampler, llama_sampler_init_top_p(0.95f, 1));
     llama_sampler_chain_add(g_sampler, llama_sampler_init_temp(0.7f));
     llama_sampler_chain_add(g_sampler, llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
+
+    // Warm up the freshly-created context once.  This activates the model's
+    // compute paths before the first real prompt, then clears the temporary
+    // memory so the first user turn starts from a clean context.
+    const llama_vocab *warm_vocab = llama_model_get_vocab(g_model);
+    const llama_token warm_token = warm_vocab ? llama_vocab_bos(warm_vocab) : LLAMA_TOKEN_NULL;
+    if (warm_vocab && warm_token != LLAMA_TOKEN_NULL) {
+        llama_batch warm = llama_batch_init(1, 0, 1);
+        if (warm.token && warm.pos && warm.n_seq_id && warm.seq_id && warm.logits) {
+            warm.n_tokens = 1;
+            warm.token[0] = warm_token;
+            warm.pos[0] = 0;
+            warm.n_seq_id[0] = 1;
+            warm.seq_id[0][0] = 0;
+            warm.logits[0] = false;
+            llama_set_warmup(g_ctx, true);
+            const int warm_rc = llama_decode(g_ctx, warm);
+            llama_set_warmup(g_ctx, false);
+            llama_synchronize(g_ctx);
+            llama_batch_free(warm);
+            llama_memory_clear(llama_get_memory(g_ctx), true);
+            native_log("[load] warmup rc=%d; context cleared", warm_rc);
+            if (warm_rc != 0) {
+                native_log("[load] warmup decode failed");
+                clear_engine();
+                return JNI_FALSE;
+            }
+        } else {
+            llama_batch_free(warm);
+            native_log("[load] warmup batch allocation failed");
+            clear_engine();
+            return JNI_FALSE;
+        }
+    } else {
+        native_log("[load] no BOS token available; skipping warmup");
+    }
+
     native_log("[load] sampler initialized; model ready");
     return JNI_TRUE;
 }
@@ -328,11 +387,15 @@ Java_com_llmapp_Engine_generate(JNIEnv *env, jobject, jstring jprompt, jobject c
     // generation prompt itself, so that tag never appears in sampled output.
     // Notify the UI about the already-open reasoning section without changing
     // the model input or generated text.
-    const bool thinking_prefilled = formatted.size() >= 7 &&
-        formatted.compare(formatted.size() - 7, 7, "<think>") == 0;
-    const bool thinking_prefilled_nl = formatted.size() >= 8 &&
-        formatted.compare(formatted.size() - 8, 8, "<think>\\n") == 0;
-    if (thinking_prefilled || thinking_prefilled_nl) {
+    size_t tail = formatted.size();
+    while (tail > 0) {
+        const unsigned char c = (unsigned char)formatted[tail - 1];
+        if (c == ' ' || c == '\t' || c == '\r' || c == '\n') --tail;
+        else break;
+    }
+    const bool thinking_prefilled = tail >= 7 &&
+        formatted.compare(tail - 7, 7, "<think>") == 0;
+    if (thinking_prefilled) {
         jstring js = env->NewStringUTF("<think>");
         if (js) {
             env->CallVoidMethod(callback, on_token, js);
