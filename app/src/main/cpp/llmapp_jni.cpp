@@ -300,7 +300,6 @@ Java_com_llmapp_Engine_generate(JNIEnv *env, jobject, jstring jprompt, jobject c
         if (batch.n_tokens == 512 || i + 1 == tokens.size()) {
             native_log("[generate] decode prompt batch=%d",batch.n_tokens);
             if (llama_decode(g_ctx, batch) != 0) {
-                llama_batch_free(batch);
                 native_log("[generate] prompt decode failed");
                 llama_batch_free(batch);
                 g_history.pop_back();
