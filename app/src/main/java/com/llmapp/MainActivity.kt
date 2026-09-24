@@ -13,8 +13,14 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -151,6 +157,7 @@ private fun ChatScreen(engine:Engine,logDir:File){
     var thinkingDone by remember{mutableStateOf(false)}
     var streamBuffer by remember{mutableStateOf("")}
     val list=rememberLazyListState()
+    val bottomRequester=remember{BringIntoViewRequester()}
 
     val picker=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()){uri:Uri?->
         uri?:return@rememberLauncherForActivityResult
@@ -170,9 +177,11 @@ private fun ChatScreen(engine:Engine,logDir:File){
         }
     }
 
-    LaunchedEffect(messages.size,current,thinking,thinkingActive){
-        val last = list.layoutInfo.totalItemsCount - 1
-        if(last >= 0) list.scrollToItem(last)
+    LaunchedEffect(generating){
+        if(generating){
+            snapshotFlow{messages.size + current.length + thinking.length}
+                .collect{bottomRequester.bringIntoView()}
+        }
     }
 
     Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(12.dp)){
@@ -181,19 +190,54 @@ private fun ChatScreen(engine:Engine,logDir:File){
                 Surface(shape=RoundedCornerShape(18.dp),color=if(m.user)Color(0xFF242427)else Color(0xFF151517)){Text(m.text,Modifier.padding(14.dp))}
             }}
             if(thinking.isNotEmpty())item{
-                Surface(shape=RoundedCornerShape(18.dp),color=Color(0xFF101012)){
-                    Column(Modifier.padding(14.dp)){
-                        Text(if(thinkingActive)"Pensando..." else "Pensamento",style=MaterialTheme.typography.labelMedium,color=Color(0xFFBDBDBD))
-                        Spacer(Modifier.height(6.dp))
-                        Text(thinking,color=Color.White,style=MaterialTheme.typography.bodyMedium)
+                Surface(
+                    shape=RoundedCornerShape(14.dp),
+                    color=Color.White,
+                    contentColor=Color.Black
+                ){
+                    Column(Modifier.padding(horizontal=14.dp,vertical=10.dp)){
+                        Text(
+                            if(thinkingActive)"THINKING" else "THINKING",
+                            style=MaterialTheme.typography.labelSmall,
+                            color=Color.Black
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            thinking,
+                            color=Color.Black,
+                            style=MaterialTheme.typography.bodyMedium
+                        )
                     }
                 }
             }
-            if(current.isNotEmpty())item{Surface(shape=RoundedCornerShape(18.dp),color=Color(0xFF151517)){Text(current,Modifier.padding(14.dp))}}
+            if(current.isNotEmpty())item{
+                Surface(shape=RoundedCornerShape(18.dp),color=Color(0xFF151517)){
+                    Text(current,Modifier.padding(14.dp),color=Color(0xFFE8E8E8))
+                }
+            }
+            item{Spacer(Modifier.height(1.dp).bringIntoViewRequester(bottomRequester))}
         }
         Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)){
-            OutlinedTextField(value=input,onValueChange={input=it},modifier=Modifier.weight(1f),placeholder={Text("Mensagem...")},maxLines=4,enabled=!generating)
-            Button(onClick={
+            val sendEnabled=generating || (loaded && input.isNotBlank())
+            TextField(
+                value=input,
+                onValueChange={input=it},
+                modifier=Modifier.weight(1f),
+                placeholder={Text("Mensagem...")},
+                maxLines=4,
+                enabled=!generating,
+                shape=RoundedCornerShape(28.dp),
+                colors=TextFieldDefaults.colors(
+                    focusedContainerColor=Color(0xFF1A1A1D),
+                    unfocusedContainerColor=Color(0xFF1A1A1D),
+                    disabledContainerColor=Color(0xFF1A1A1D),
+                    focusedIndicatorColor=Color.Transparent,
+                    unfocusedIndicatorColor=Color.Transparent,
+                    disabledIndicatorColor=Color.Transparent
+                ),
+                trailingIcon={
+                    IconButton(
+                        onClick={
                 if(generating){engine.stop();return@Button}
                 val prompt=input.trim();if(prompt.isEmpty()||!loaded)return@Button
                 input="";messages.add(Message(true,prompt));current="";thinking="";thinkingActive=false;thinkingDone=false;streamBuffer="";generating=true
@@ -268,8 +312,23 @@ private fun ChatScreen(engine:Engine,logDir:File){
                         launch(Dispatchers.Main){current="";generating=false;messages.add(Message(false,"Erro durante a geração."))}
                     }
                 }
-            },enabled=loaded||generating,modifier=Modifier.height(56.dp)){Text(if(generating)"Pausar" else "Enviar")}
-            OutlinedButton(onClick={picker.launch(arrayOf("application/octet-stream","application/x-gguf","*/*"))},enabled=!generating,modifier=Modifier.height(56.dp)){Text("Carregar modelo")}
+                        },
+                        enabled=sendEnabled
+                    ){
+                        Icon(
+                            imageVector=if(generating) Icons.Default.Stop else Icons.Default.Send,
+                            contentDescription=if(generating)"Parar geração" else "Enviar mensagem"
+                        )
+                    }
+                }
+            )
+            FilledTonalIconButton(
+                onClick={picker.launch(arrayOf("application/octet-stream","application/x-gguf","*/*"))},
+                enabled=!generating,
+                modifier=Modifier.size(56.dp)
+            ){
+                Icon(Icons.Default.FolderOpen,contentDescription="Carregar modelo")
+            }
         }
     }
 }
