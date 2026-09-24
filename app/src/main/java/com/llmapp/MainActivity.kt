@@ -13,9 +13,6 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.relocation.BringIntoViewRequester
-import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Send
@@ -144,7 +141,6 @@ private fun timestamp():String=SimpleDateFormat("yyyyMMdd-HHmmss-SSS",Locale.US)
 
 
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ChatScreen(engine:Engine,logDir:File){
     val context=androidx.compose.ui.platform.LocalContext.current
@@ -159,30 +155,30 @@ private fun ChatScreen(engine:Engine,logDir:File){
     var thinkingDone by remember{mutableStateOf(false)}
     var streamBuffer by remember{mutableStateOf("")}
     val list=rememberLazyListState()
-    val bottomRequester=remember{BringIntoViewRequester()}
 
     val picker=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()){uri:Uri?->
-        uri?:return@rememberLauncherForActivityResult
-        scope.launch(Dispatchers.IO){
-            try{
-                val file=File(context.filesDir,"model.gguf")
-                engine.log("[ui] copying model")
-                context.contentResolver.openInputStream(uri)?.use{ins->file.outputStream().use{outs->ins.copyTo(outs,1024*1024)}}
-                    ?:throw IllegalStateException("Could not open selected model")
-                engine.log("[ui] model bytes=${file.length()}")
-                val ok=engine.loadModel(file.absolutePath)
-                launch(Dispatchers.Main){loaded=ok;if(!ok)messages.add(Message(false,"Falha ao carregar o modelo."))}
-            }catch(t:Throwable){
-                engine.log("[ui] load exception: ${t.stackTraceToString()}")
-                launch(Dispatchers.Main){loaded=false;messages.add(Message(false,"Falha ao carregar o modelo."))}
+        if(uri!=null){
+            scope.launch(Dispatchers.IO){
+                try{
+                    val file=File(context.filesDir,"model.gguf")
+                    engine.log("[ui] copying model")
+                    context.contentResolver.openInputStream(uri)?.use{ins->file.outputStream().use{outs->ins.copyTo(outs,1024*1024)}}
+                        ?:throw IllegalStateException("Could not open selected model")
+                    engine.log("[ui] model bytes="+file.length())
+                    val ok=engine.loadModel(file.absolutePath)
+                    launch(Dispatchers.Main){loaded=ok;if(!ok)messages.add(Message(false,"Falha ao carregar o modelo."))}
+                }catch(t:Throwable){
+                    engine.log("[ui] load exception: "+t.stackTraceToString())
+                    launch(Dispatchers.Main){loaded=false;messages.add(Message(false,"Falha ao carregar o modelo."))}
+                }
             }
         }
     }
-
-    LaunchedEffect(generating){
+    LaunchedEffect(generating,current,thinking,messages.size){
         if(generating){
-            snapshotFlow{messages.size + current.length + thinking.length}
-                .collect{bottomRequester.bringIntoView()}
+            withFrameNanos{}
+            val last=list.layoutInfo.totalItemsCount-1
+            if(last>=0)list.scrollToItem(last)
         }
     }
 
@@ -217,7 +213,6 @@ private fun ChatScreen(engine:Engine,logDir:File){
                     Text(current,Modifier.padding(14.dp),color=Color(0xFFE8E8E8))
                 }
             }
-            item{Spacer(Modifier.height(1.dp).bringIntoViewRequester(bottomRequester))}
         }
         Row(
             Modifier.fillMaxWidth(),
