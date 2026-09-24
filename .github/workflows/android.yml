@@ -77,15 +77,18 @@ jobs:
 
           ZIPALIGN="$ANDROID_HOME/build-tools/35.0.0/zipalign"
           APKSIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
-          SIGNED="app/build/outputs/apk/release/app-release.apk"
+          ALIGNED="$RUNNER_TEMP/aligned.apk"
+          SIGNED="$RUNNER_TEMP/signed.apk"
+          OUTPUT="app/build/outputs/apk/release/app-release.apk"
 
-          "$ZIPALIGN" -f 4 "$APK" "$RUNNER_TEMP/aligned.apk"
-          "$APKSIGNER" sign --ks "$KEYSTORE" --ks-pass "pass:$PASS" --key-pass "pass:$PASS" --ks-key-alias llmapp --out "$SIGNED" "$RUNNER_TEMP/aligned.apk"
+          "$ZIPALIGN" -f 4 "$APK" "$ALIGNED"
+          "$APKSIGNER" sign --ks "$KEYSTORE" --ks-pass "pass:$PASS" --key-pass "pass:$PASS" --ks-key-alias llmapp --out "$SIGNED" "$ALIGNED"
           "$APKSIGNER" verify --verbose "$SIGNED"
 
-          rm -f "$APK" "$RUNNER_TEMP/aligned.apk"
-          echo "Signed APK: $SIGNED"
-          ls -lh "$SIGNED"
+          mv -f "$SIGNED" "$OUTPUT"
+          rm -f "$ALIGNED" "$KEYSTORE"
+          echo "Signed APK: $OUTPUT"
+          ls -lh "$OUTPUT"
 
       - uses: actions/upload-artifact@v4
         with:
