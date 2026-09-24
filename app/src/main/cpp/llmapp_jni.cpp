@@ -324,6 +324,29 @@ Java_com_llmapp_Engine_generate(JNIEnv *env, jobject, jstring jprompt, jobject c
         return JNI_FALSE;
     }
 
+    // Qwen3.5-style templates can place the opening <think> tag in the
+    // generation prompt itself, so that tag never appears in sampled output.
+    // Notify the UI about the already-open reasoning section without changing
+    // the model input or generated text.
+    const bool thinking_prefilled = formatted.size() >= 7 &&
+        formatted.compare(formatted.size() - 7, 7, "<think>") == 0;
+    const bool thinking_prefilled_nl = formatted.size() >= 8 &&
+        formatted.compare(formatted.size() - 8, 8, "<think>\\n") == 0;
+    if (thinking_prefilled || thinking_prefilled_nl) {
+        jstring js = env->NewStringUTF("<think>");
+        if (js) {
+            env->CallVoidMethod(callback, on_token, js);
+            env->DeleteLocalRef(js);
+            if (env->ExceptionCheck()) {
+                env->ExceptionClear();
+                g_stop = true;
+                g_history.pop_back();
+                return JNI_FALSE;
+            }
+        }
+        native_log("[generate] reasoning prefilled by chat template");
+    }
+
     std::string answer;
     answer.reserve(256);
 
