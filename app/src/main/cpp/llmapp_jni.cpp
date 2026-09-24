@@ -23,6 +23,13 @@ static std::vector<std::pair<std::string, std::string>> g_history;
 static std::mutex g_mutex;
 static std::atomic_bool g_stop{false};
 static bool g_backend_ready=false;
+static float g_temperature=0.7f;
+static float g_top_p=0.95f;
+static int g_top_k=40;
+static float g_min_p=0.05f;
+static int g_max_tokens=2048;
+static std::string g_system_prompt;
+static bool g_use_jinja=true;
 static std::mutex g_log_mutex;
 static std::string g_current_log;
 
@@ -82,7 +89,7 @@ static std::vector<llama_token> tokenize(const llama_vocab *vocab, const std::st
 }
 
 static std::string format_chat() {
-    const char *tmpl = llama_model_chat_template(g_model, nullptr);
+    const char *tmpl = g_use_jinja ? llama_model_chat_template(g_model, nullptr) : nullptr;
 
     // Some recent GGUF templates (notably Qwen3.5) are full Jinja templates.
     // The low-level C helper may reject them even though the model carries a
@@ -91,6 +98,11 @@ static std::string format_chat() {
     if (tmpl && std::strstr(tmpl, "<|im_start|>")) {
         std::string fallback;
         fallback.reserve(1024);
+        if (!g_system_prompt.empty()) {
+            fallback += "<|im_start|>system\n";
+            fallback += g_system_prompt;
+            fallback += "<|im_end|>\n";
+        }
         for (const auto &m : g_history) {
             fallback += "<|im_start|>";
             fallback += m.first;
@@ -117,7 +129,8 @@ static std::string format_chat() {
     if (!tmpl) return fallback;
 
     std::vector<llama_chat_message> msgs;
-    msgs.reserve(g_history.size());
+    msgs.reserve(g_history.size() + (g_system_prompt.empty() ? 0 : 1));
+    if (!g_system_prompt.empty()) msgs.push_back({"system", g_system_prompt.c_str()});
     for (auto &m : g_history) msgs.push_back({m.first.c_str(), m.second.c_str()});
 
     int n = llama_chat_apply_template(tmpl, msgs.data(), msgs.size(), true, nullptr, 0);
@@ -205,6 +218,27 @@ Java_com_llmapp_Engine_log(JNIEnv* env,jobject,jstring jmsg){
     native_log("%s",p); env->ReleaseStringUTFChars(jmsg,p);
 }
 
+extern "C" JNIEXPORT void JNICALL
+Java_com_llmapp_Engine_setGenerationSettings(JNIEnv *env, jobject, jfloat temperature, jfloat topP, jint topK, jfloat minP, jint maxTokens, jstring jsystem, jboolean useJinja) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    g_temperature = std::max(0.0f, std::min(2.0f, (float)temperature));
+    g_top_p = std::max(0.0f, std::min(1.0f, (float)topP));
+    g_top_k = std::max(0, std::min(100, (int)topK));
+    g_min_p = std::max(0.0f, std::min(1.0f, (float)minP));
+    g_max_tokens = std::max(128, std::min(4096, (int)maxTokens));
+    g_use_jinja = useJinja;
+    g_system_prompt.clear();
+    if (jsystem) {
+        const char *p = env->GetStringUTFChars(jsystem, nullptr);
+        if (p) {
+            g_system_prompt = p;
+            env->ReleaseStringUTFChars(jsystem, p);
+        }
+    }
+    native_log("[settings] temp=%.3f top_p=%.3f top_k=%d min_p=%.3f max_tokens=%d jinja=%d system_bytes=%zu",
+               g_temperature, g_top_p, g_top_k, g_min_p, g_max_tokens, g_use_jinja ? 1 : 0, g_system_prompt.size());
+}
+
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_llmapp_Engine_loadModel(JNIEnv *env, jobject, jstring jpath) {
     std::lock_guard<std::mutex> lock(g_mutex);
@@ -261,9 +295,10 @@ Java_com_llmapp_Engine_loadModel(JNIEnv *env, jobject, jstring jpath) {
         clear_engine();
         return JNI_FALSE;
     }
-    llama_sampler_chain_add(g_sampler, llama_sampler_init_top_k(40));
-    llama_sampler_chain_add(g_sampler, llama_sampler_init_top_p(0.95f, 1));
-    llama_sampler_chain_add(g_sampler, llama_sampler_init_temp(0.7f));
+    llama_sampler_chain_add(g_sampler, llama_sampler_init_top_k(g_top_k));
+    llama_sampler_chain_add(g_sampler, llama_sampler_init_top_p(g_top_p, 1));
+    llama_sampler_chain_add(g_sampler, llama_sampler_init_min_p(g_min_p, 1));
+    llama_sampler_chain_add(g_sampler, llama_sampler_init_temp(g_temperature));
     llama_sampler_chain_add(g_sampler, llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
 
     // Warm up the freshly-created context once.  This activates the model's
@@ -414,7 +449,7 @@ Java_com_llmapp_Engine_generate(JNIEnv *env, jobject, jstring jprompt, jobject c
     answer.reserve(256);
 
     native_log("[generate] sampling loop start");
-    for (int step = 0; step < 2048 && !g_stop; ++step) {
+    for (int step = 0; step < g_max_tokens && !g_stop; ++step) {
         const llama_token tok = llama_sampler_sample(g_sampler, g_ctx, -1);
         if(step==0) native_log("[generate] first token sampled=%d",tok);
         if (llama_vocab_is_eog(vocab, tok)) {

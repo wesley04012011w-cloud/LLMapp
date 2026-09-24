@@ -17,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
@@ -40,6 +41,7 @@ private class Engine {
     external fun log(message:String)
     external fun loadModel(path:String):Boolean
     external fun generate(prompt:String,callback:TokenCallback):Boolean
+    external fun setGenerationSettings(temperature:Float,topP:Float,topK:Int,minP:Float,maxTokens:Int,systemPrompt:String,useJinja:Boolean)
     external fun stop()
     external fun unload()
 }
@@ -154,6 +156,14 @@ private fun ChatScreen(engine:Engine,logDir:File){
     var thinkingActive by remember{mutableStateOf(false)}
     var thinkingDone by remember{mutableStateOf(false)}
     var streamBuffer by remember{mutableStateOf("")}
+    var showSettings by remember{mutableStateOf(false)}
+    var temperature by remember{mutableStateOf(0.7f)}
+    var topP by remember{mutableStateOf(0.95f)}
+    var topK by remember{mutableStateOf(40)}
+    var minP by remember{mutableStateOf(0.05f)}
+    var maxTokens by remember{mutableStateOf(2048)}
+    var systemPrompt by remember{mutableStateOf("")}
+    var useJinja by remember{mutableStateOf(true)}
     val list=rememberLazyListState()
 
     val picker=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()){uri:Uri?->
@@ -187,7 +197,22 @@ private fun ChatScreen(engine:Engine,logDir:File){
         }
     }
 
-    Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(12.dp)){
+    Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal=12.dp,vertical=8.dp)){
+        Row(
+            Modifier.fillMaxWidth().height(52.dp),
+            verticalAlignment=Alignment.CenterVertically
+        ){
+            IconButton(onClick={showSettings=true},enabled=!generating){
+                Icon(Icons.Default.Settings,contentDescription="Configurações de geração")
+            }
+            Spacer(Modifier.weight(1f))
+            FilledTonalIconButton(
+                onClick={picker.launch(arrayOf("application/octet-stream","application/x-gguf","*/*"))},
+                enabled=!generating
+            ){
+                Icon(Icons.Default.FolderOpen,contentDescription="Carregar modelo")
+            }
+        }
         LazyColumn(Modifier.weight(1f).fillMaxWidth(),state=list,verticalArrangement=Arrangement.spacedBy(10.dp),contentPadding=PaddingValues(vertical=12.dp)){
             items(messages){m->Row(Modifier.fillMaxWidth(),horizontalArrangement=if(m.user)Arrangement.End else Arrangement.Start){
                 Surface(shape=RoundedCornerShape(18.dp),color=if(m.user)Color(0xFF242427)else Color(0xFF151517)){Text(m.text,Modifier.padding(14.dp))}
@@ -219,138 +244,162 @@ private fun ChatScreen(engine:Engine,logDir:File){
                 }
             }
         }
-        Row(
-            Modifier.fillMaxWidth(),
-            verticalAlignment=Alignment.CenterVertically,
-            horizontalArrangement=Arrangement.spacedBy(8.dp)
-        ){
-            val sendEnabled=generating || (loaded && input.isNotBlank())
-            TextField(
-                value=input,
-                onValueChange={input=it},
-                modifier=Modifier.weight(1f),
-                placeholder={Text("Mensagem...")},
-                maxLines=4,
-                enabled=!generating,
-                shape=RoundedCornerShape(28.dp),
-                colors=TextFieldDefaults.colors(
-                    focusedContainerColor=Color(0xFF1A1A1D),
-                    unfocusedContainerColor=Color(0xFF1A1A1D),
-                    disabledContainerColor=Color(0xFF1A1A1D),
-                    focusedIndicatorColor=Color.Transparent,
-                    unfocusedIndicatorColor=Color.Transparent,
-                    disabledIndicatorColor=Color.Transparent
-                ),
-                trailingIcon={
-                    IconButton(
-                        onClick={
-                            if(generating){
-                                engine.stop()
-                            }else{
-                                val prompt=input.trim()
-                                if(prompt.isNotEmpty() && loaded){
-                                    input=""
-                                    messages.add(Message(true,prompt))
-                                    current=""
-                                    thinking=""
-                                    thinkingActive=false
-                                    thinkingDone=false
-                                    streamBuffer=""
-                                    generating=true
-
-                                    scope.launch(Dispatchers.IO){
-                                        try{
-                                            engine.log("========== NEW ENTRY ==========")
-                                            engine.log("[ui] send prompt length=${prompt.length}")
-                                            val ok=engine.generate(prompt,TokenCallback{token->
-                                                scope.launch(Dispatchers.Main){
-                                                    streamBuffer += token
-                                                    var again=true
-                                                    while(again){
-                                                        again=false
-                                                        if(!thinkingActive && !thinkingDone){
-                                                            val starts=listOf("<think>","<|think|>","<|START_THINKING|>","<|channel|>analysis","[THINK]")
-                                                            val hit=starts.mapNotNull{tag->streamBuffer.indexOf(tag).takeIf{it>=0}?.let{it to tag}}.minByOrNull{it.first}
-                                                            if(hit!=null){
-                                                                val(idx,tag)=hit
-                                                                if(idx>0)current+=streamBuffer.substring(0,idx)
-                                                                streamBuffer=streamBuffer.substring(idx+tag.length)
-                                                                thinkingActive=true
-                                                                again=true
-                                                            }else{
-                                                                val keep=starts.maxOfOrNull{tag->
-                                                                    val max=minOf(tag.length-1,streamBuffer.length)
-                                                                    (0..max).lastOrNull{n->streamBuffer.endsWith(tag.take(n))}?:0
-                                                                }?:0
-                                                                if(streamBuffer.length>keep){
-                                                                    current+=streamBuffer.dropLast(keep)
-                                                                    streamBuffer=if(keep==0)"" else streamBuffer.takeLast(keep)
-                                                                }
-                                                            }
-                                                        }else if(thinkingActive){
-                                                            val ends=listOf("</think>","<|/think|>","<|END_THINKING|>","<|channel|>final","[/THINK]","[BEGIN FINAL RESPONSE]")
-                                                            val hit=ends.mapNotNull{tag->streamBuffer.indexOf(tag).takeIf{it>=0}?.let{it to tag}}.minByOrNull{it.first}
-                                                            if(hit!=null){
-                                                                val(idx,tag)=hit
-                                                                thinking+=streamBuffer.substring(0,idx)
-                                                                streamBuffer=streamBuffer.substring(idx+tag.length)
-                                                                thinkingActive=false
-                                                                thinkingDone=true
-                                                                again=true
-                                                            }else{
-                                                                val keep=ends.maxOfOrNull{tag->
-                                                                    val max=minOf(tag.length-1,streamBuffer.length)
-                                                                    (0..max).lastOrNull{n->streamBuffer.endsWith(tag.take(n))}?:0
-                                                                }?:0
-                                                                if(streamBuffer.length>keep){
-                                                                    thinking+=streamBuffer.dropLast(keep)
-                                                                    streamBuffer=if(keep==0)"" else streamBuffer.takeLast(keep)
-                                                                }
-                                                            }
+        val sendEnabled=generating || (loaded && input.isNotBlank())
+        TextField(
+            value=input,
+            onValueChange={input=it},
+            modifier=Modifier.fillMaxWidth(),
+            placeholder={Text("Mensagem...")},
+            maxLines=5,
+            enabled=!generating,
+            shape=RoundedCornerShape(28.dp),
+            colors=TextFieldDefaults.colors(
+                focusedContainerColor=Color(0xFF1A1A1D),
+                unfocusedContainerColor=Color(0xFF1A1A1D),
+                disabledContainerColor=Color(0xFF1A1A1D),
+                focusedIndicatorColor=Color.Transparent,
+                unfocusedIndicatorColor=Color.Transparent,
+                disabledIndicatorColor=Color.Transparent
+            ),
+            trailingIcon={
+                IconButton(
+                    onClick={
+                        if(generating){
+                            engine.stop()
+                        }else{
+                            val prompt=input.trim()
+                            if(prompt.isNotEmpty() && loaded){
+                                input=""
+                                messages.add(Message(true,prompt))
+                                current=""
+                                thinking=""
+                                thinkingActive=false
+                                thinkingDone=false
+                                streamBuffer=""
+                                generating=true
+                                scope.launch(Dispatchers.IO){
+                                    try{
+                                        engine.log("========== NEW ENTRY ==========")
+                                        engine.log("[ui] send prompt length="+prompt.length)
+                                        engine.setGenerationSettings(temperature,topP,topK,minP,maxTokens,systemPrompt,useJinja)
+                                        val ok=engine.generate(prompt,TokenCallback{token->
+                                            scope.launch(Dispatchers.Main){
+                                                streamBuffer += token
+                                                var again=true
+                                                while(again){
+                                                    again=false
+                                                    if(!thinkingActive && !thinkingDone){
+                                                        val starts=listOf("<think>","<|think|>","<|START_THINKING|>","<|channel|>analysis","[THINK]")
+                                                        val hit=starts.mapNotNull{tag->streamBuffer.indexOf(tag).takeIf{it>=0}?.let{it to tag}}.minByOrNull{it.first}
+                                                        if(hit!=null){
+                                                            val(idx,tag)=hit
+                                                            if(idx>0)current+=streamBuffer.substring(0,idx)
+                                                            streamBuffer=streamBuffer.substring(idx+tag.length)
+                                                            thinkingActive=true
+                                                            again=true
                                                         }else{
-                                                            current+=streamBuffer
-                                                            streamBuffer=""
+                                                            val keep=starts.maxOfOrNull{tag->
+                                                                val max=minOf(tag.length-1,streamBuffer.length)
+                                                                (0..max).lastOrNull{n->streamBuffer.endsWith(tag.take(n))}?:0
+                                                            }?:0
+                                                            if(streamBuffer.length>keep){
+                                                                current+=streamBuffer.dropLast(keep)
+                                                                streamBuffer=if(keep==0)"" else streamBuffer.takeLast(keep)
+                                                            }
                                                         }
+                                                    }else if(thinkingActive){
+                                                        val ends=listOf("</think>","<|/think|>","<|END_THINKING|>","<|channel|>final","[/THINK]","[BEGIN FINAL RESPONSE]")
+                                                        val hit=ends.mapNotNull{tag->streamBuffer.indexOf(tag).takeIf{it>=0}?.let{it to tag}}.minByOrNull{it.first}
+                                                        if(hit!=null){
+                                                            val(idx,tag)=hit
+                                                            thinking+=streamBuffer.substring(0,idx)
+                                                            streamBuffer=streamBuffer.substring(idx+tag.length)
+                                                            thinkingActive=false
+                                                            thinkingDone=true
+                                                            again=true
+                                                        }else{
+                                                            val keep=ends.maxOfOrNull{tag->
+                                                                val max=minOf(tag.length-1,streamBuffer.length)
+                                                                (0..max).lastOrNull{n->streamBuffer.endsWith(tag.take(n))}?:0
+                                                            }?:0
+                                                            if(streamBuffer.length>keep){
+                                                                thinking+=streamBuffer.dropLast(keep)
+                                                                streamBuffer=if(keep==0)"" else streamBuffer.takeLast(keep)
+                                                            }
+                                                        }
+                                                    }else{
+                                                        current+=streamBuffer
+                                                        streamBuffer=""
                                                     }
                                                 }
-                                            })
-                                            engine.log("[ui] generate returned=$ok")
-                                            launch(Dispatchers.Main){
-                                                if(thinkingActive)thinking+=streamBuffer else current+=streamBuffer
-                                                streamBuffer=""
-                                                thinkingActive=false
-                                                if(current.isNotEmpty())messages.add(Message(false,current))
-                                                current=""
-                                                generating=false
-                                                if(!ok)messages.add(Message(false,"Geração interrompida ou falhou."))
                                             }
-                                        }catch(t:Throwable){
-                                            try{engine.log("[ui] generate exception: ${t.stackTraceToString()}")}catch(_:Throwable){}
-                                            launch(Dispatchers.Main){
-                                                current=""
-                                                generating=false
-                                                messages.add(Message(false,"Erro durante a geração."))
-                                            }
+                                        })
+                                        engine.log("[ui] generate returned="+ok)
+                                        launch(Dispatchers.Main){
+                                            if(thinkingActive)thinking+=streamBuffer else current+=streamBuffer
+                                            streamBuffer=""
+                                            thinkingActive=false
+                                            if(current.isNotEmpty())messages.add(Message(false,current))
+                                            current=""
+                                            generating=false
+                                            if(!ok)messages.add(Message(false,"Geração interrompida ou falhou."))
+                                        }
+                                    }catch(t:Throwable){
+                                        try{engine.log("[ui] generate exception: "+t.stackTraceToString())}catch(_:Throwable){}
+                                        launch(Dispatchers.Main){
+                                            current=""
+                                            generating=false
+                                            messages.add(Message(false,"Erro durante a geração."))
                                         }
                                     }
                                 }
                             }
-                        },
-                        enabled=sendEnabled
-                    ){
-                        Icon(
-                            imageVector=if(generating)Icons.Default.Stop else Icons.Default.Send,
-                            contentDescription=if(generating)"Parar geração" else "Enviar mensagem"
-                        )
-                    }
+                        }
+                    },
+                    enabled=sendEnabled
+                ){
+                    Icon(
+                        imageVector=if(generating)Icons.Default.Stop else Icons.Default.Send,
+                        contentDescription=if(generating)"Parar geração" else "Enviar mensagem"
+                    )
                 }
-            )
-            FilledTonalIconButton(
-                onClick={picker.launch(arrayOf("application/octet-stream","application/x-gguf","*/*"))},
-                enabled=!generating,
-                modifier=Modifier.size(56.dp)
+            }
+        )
+        if(showSettings){
+            val sheetState=rememberModalBottomSheetState(skipPartiallyExpanded=true)
+            ModalBottomSheet(
+                onDismissRequest={showSettings=false},
+                sheetState=sheetState
             ){
-                Icon(Icons.Default.FolderOpen,contentDescription="Carregar modelo")
+                Column(
+                    Modifier.fillMaxWidth().padding(horizontal=20.dp,vertical=8.dp),
+                    verticalArrangement=Arrangement.spacedBy(12.dp)
+                ){
+                    Text("Configurações de geração",style=MaterialTheme.typography.titleLarge)
+                    Text("Temperatura: %.2f".format(Locale.US,temperature))
+                    Slider(value=temperature,onValueChange={temperature=it},valueRange=0f..2f)
+                    Text("Top P: %.2f".format(Locale.US,topP))
+                    Slider(value=topP,onValueChange={topP=it},valueRange=0f..1f)
+                    Text("Top K: $topK")
+                    Slider(value=topK.toFloat(),onValueChange={topK=it.toInt()},valueRange=0f..100f,steps=99)
+                    Text("Min P: %.2f".format(Locale.US,minP))
+                    Slider(value=minP,onValueChange={minP=it},valueRange=0f..1f)
+                    Text("Máximo de tokens: $maxTokens")
+                    Slider(value=maxTokens.toFloat(),onValueChange={maxTokens=(it/128).toInt()*128},valueRange=128f..4096f,steps=31)
+                    Row(verticalAlignment=Alignment.CenterVertically){
+                        Checkbox(checked=useJinja,onCheckedChange={useJinja=it})
+                        Text("Usar template Jinja do modelo")
+                    }
+                    OutlinedTextField(
+                        value=systemPrompt,
+                        onValueChange={systemPrompt=it},
+                        modifier=Modifier.fillMaxWidth(),
+                        label={Text("System prompt")},
+                        minLines=3,
+                        maxLines=6
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
             }
         }
 
