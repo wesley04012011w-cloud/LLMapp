@@ -170,7 +170,7 @@ private fun ChatScreen(engine:Engine,logDir:File){
         }
     }
 
-    LaunchedEffect(messages.size,current){if(messages.isNotEmpty())list.animateScrollToItem(messages.lastIndex)}
+    LaunchedEffect(messages.size,current,thinking){if(messages.isNotEmpty())list.animateScrollToItem(messages.lastIndex)}
 
     Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(12.dp)){
         LazyColumn(Modifier.weight(1f).fillMaxWidth(),state=list,verticalArrangement=Arrangement.spacedBy(10.dp),contentPadding=PaddingValues(vertical=12.dp)){
@@ -180,7 +180,7 @@ private fun ChatScreen(engine:Engine,logDir:File){
             if(thinking.isNotEmpty())item{
                 Surface(shape=RoundedCornerShape(18.dp),color=Color(0xFF101012)){
                     Column(Modifier.padding(14.dp)){
-                        Text(if(thinkingActive)"Pensando..." else "Pensamento",style=MaterialTheme.typography.labelMedium)
+                        Text(if(thinkingActive)"Pensando..." else "Pensamento",style=MaterialTheme.typography.labelMedium,color=Color(0xFFBDBDBD))
                         Spacer(Modifier.height(6.dp))
                         Text(thinking)
                     }
@@ -205,7 +205,7 @@ private fun ChatScreen(engine:Engine,logDir:File){
                                 while(again){
                                     again = false
                                     if(!thinkingActive && !thinkingDone){
-                                        val starts = listOf("<think>", "<|think|>", "<|START_THINKING|>", "[THINK]")
+                                        val starts = listOf("<think>", "<|think|>", "<|START_THINKING|>", "<|channel|>analysis", "[THINK]")
                                         val hit = starts.mapNotNull { tag -> streamBuffer.indexOf(tag).takeIf { it >= 0 }?.let { it to tag } }.minByOrNull { it.first }
                                         if(hit != null){
                                             val (idx, tag) = hit
@@ -218,7 +218,7 @@ private fun ChatScreen(engine:Engine,logDir:File){
                                             streamBuffer = streamBuffer.takeLast(32)
                                         }
                                     }else if(thinkingActive){
-                                        val ends = listOf("</think>", "<|/think|>", "<|END_THINKING|>", "[/THINK]", "[BEGIN FINAL RESPONSE]")
+                                        val ends = listOf("</think>", "<|/think|>", "<|END_THINKING|>", "<|channel|>final", "[/THINK]", "[BEGIN FINAL RESPONSE]")
                                         val hit = ends.mapNotNull { tag -> streamBuffer.indexOf(tag).takeIf { it >= 0 }?.let { it to tag } }.minByOrNull { it.first }
                                         if(hit != null){
                                             val (idx, tag) = hit
