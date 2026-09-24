@@ -2,6 +2,7 @@
 #include <android/log.h>
 #include <cstdarg>
 #include <cstdio>
+#include <cstring>
 #include <fcntl.h>
 #include <signal.h>
 #include <unistd.h>
@@ -44,6 +45,13 @@ static void native_log(const char *fmt,...){
     std::lock_guard<std::mutex> lock(g_log_mutex);
     if(!g_current_log.empty()){append_file(g_current_log.c_str(),buf,len);append_file(g_current_log.c_str(),"\n",1);}
 }
+static void llama_log_bridge(enum ggml_log_level level,const char *text,void *){
+    if(!text)return;
+    if(level>=GGML_LOG_LEVEL_WARN){
+        native_log("[llama] %s",text);
+    }
+}
+
 static void crash_handler(int sig){
     if(!g_current_log.empty()){
         const char *msg="\n========== NATIVE CRASH ==========\\nsignal received; process crashed in native code.\\n";
@@ -152,6 +160,12 @@ Java_com_llmapp_Engine_initLogs(JNIEnv* env,jobject,jstring jdir){
     {std::lock_guard<std::mutex> lock(g_log_mutex); g_current_log=std::string(p)+"/startup.txt";}
     env->ReleaseStringUTFChars(jdir,p);
     install_crash_handlers();
+    llama_log_set(llama_log_bridge,nullptr);
+    if(!g_backend_ready){
+        llama_backend_init();
+        g_backend_ready=true;
+        native_log("[startup] llama backend initialized");
+    }
     native_log("[startup] native logger initialized");
 }
 extern "C" JNIEXPORT void JNICALL
@@ -172,16 +186,32 @@ Java_com_llmapp_Engine_log(JNIEnv* env,jobject,jstring jmsg){
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_llmapp_Engine_loadModel(JNIEnv *env, jobject, jstring jpath) {
     std::lock_guard<std::mutex> lock(g_mutex);
+    native_log("[load] begin");
     clear_engine();
-    if (!jpath) return JNI_FALSE;
+    if (!g_backend_ready) {
+        native_log("[load] backend was not initialized");
+        return JNI_FALSE;
+    }
+    if (!jpath) {
+        native_log("[load] null model path");
+        return JNI_FALSE;
+    }
 
     const char *path = env->GetStringUTFChars(jpath, nullptr);
-    if (!path) return JNI_FALSE;
+    if (!path) {
+        native_log("[load] GetStringUTFChars failed");
+        return JNI_FALSE;
+    }
+    native_log("[load] model path=%s", path);
 
     llama_model_params mp = llama_model_default_params();
     g_model = llama_model_load_from_file(path, mp);
     env->ReleaseStringUTFChars(jpath, path);
-    if (!g_model) return JNI_FALSE;
+    if (!g_model) {
+        native_log("[load] llama_model_load_from_file returned null");
+        return JNI_FALSE;
+    }
+    native_log("[load] model loaded");
 
     llama_context_params cp = llama_context_default_params();
     cp.n_ctx = 4096;
@@ -193,37 +223,60 @@ Java_com_llmapp_Engine_loadModel(JNIEnv *env, jobject, jstring jpath) {
     cp.n_threads_batch = threads;
     cp.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_AUTO;
 
+    native_log("[load] context n_ctx=%u n_batch=%u n_ubatch=%u threads=%u",cp.n_ctx,cp.n_batch,cp.n_ubatch,threads);
     g_ctx = llama_init_from_model(g_model, cp);
-    if (!g_ctx) { clear_engine(); return JNI_FALSE; }
+    if (!g_ctx) {
+        native_log("[load] llama_init_from_model returned null");
+        clear_engine();
+        return JNI_FALSE;
+    }
+    native_log("[load] context initialized");
 
     llama_sampler_chain_params sp = llama_sampler_chain_default_params();
     g_sampler = llama_sampler_chain_init(sp);
-    if (!g_sampler) { clear_engine(); return JNI_FALSE; }
+    if (!g_sampler) {
+        native_log("[load] llama_sampler_chain_init returned null");
+        clear_engine();
+        return JNI_FALSE;
+    }
     llama_sampler_chain_add(g_sampler, llama_sampler_init_top_k(40));
     llama_sampler_chain_add(g_sampler, llama_sampler_init_top_p(0.95f, 1));
     llama_sampler_chain_add(g_sampler, llama_sampler_init_temp(0.7f));
+    native_log("[load] sampler initialized; model ready");
     return JNI_TRUE;
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_llmapp_Engine_generate(JNIEnv *env, jobject, jstring jprompt, jobject callback) {
     std::lock_guard<std::mutex> lock(g_mutex);
-    if (!g_model || !g_ctx || !g_sampler || !jprompt || !callback) return JNI_FALSE;
+    native_log("[generate] begin");
+    if (!g_model || !g_ctx || !g_sampler || !jprompt || !callback) {
+        native_log("[generate] invalid engine/callback state");
+        return JNI_FALSE;
+    }
 
     g_stop = false;
     const char *p = env->GetStringUTFChars(jprompt, nullptr);
     if (!p) return JNI_FALSE;
     std::string user(p);
     env->ReleaseStringUTFChars(jprompt, p);
+    native_log("[generate] prompt bytes=%zu history_before=%zu",user.size(),g_history.size());
     g_history.push_back({"user", user});
 
     const std::string formatted = format_chat();
+    native_log("[generate] formatted prompt bytes=%zu",formatted.size());
     const llama_vocab *vocab = llama_model_get_vocab(g_model);
     const auto tokens = tokenize(vocab, formatted, true);
-    if (tokens.empty()) { g_history.pop_back(); return JNI_FALSE; }
+    native_log("[generate] prompt tokens=%zu cached=%zu",tokens.size(),g_cached_tokens.size());
+    if (tokens.empty()) {
+        native_log("[generate] tokenization returned empty");
+        g_history.pop_back();
+        return JNI_FALSE;
+    }
 
     size_t common = 0;
     while (common < g_cached_tokens.size() && common < tokens.size() && g_cached_tokens[common] == tokens[common]) ++common;
+    native_log("[generate] common prefix=%zu",common);
     if (common < g_cached_tokens.size()) {
         llama_memory_seq_rm(llama_get_memory(g_ctx), 0, (llama_pos)common, -1);
         g_cached_tokens.resize(common);
@@ -245,7 +298,10 @@ Java_com_llmapp_Engine_generate(JNIEnv *env, jobject, jstring jprompt, jobject c
         batch.seq_id[j][0] = 0;
         batch.logits[j] = (i + 1 == tokens.size());
         if (batch.n_tokens == 512 || i + 1 == tokens.size()) {
+            native_log("[generate] decode prompt batch=%d",batch.n_tokens);
             if (llama_decode(g_ctx, batch) != 0) {
+                llama_batch_free(batch);
+                native_log("[generate] prompt decode failed");
                 llama_batch_free(batch);
                 g_history.pop_back();
                 return JNI_FALSE;
@@ -256,11 +312,13 @@ Java_com_llmapp_Engine_generate(JNIEnv *env, jobject, jstring jprompt, jobject c
     llama_batch_free(batch);
     g_cached_tokens = tokens;
 
+    native_log("[generate] prompt decode complete");
     jclass cb_cls = env->GetObjectClass(callback);
     if (!cb_cls) { g_history.pop_back(); return JNI_FALSE; }
     jmethodID on_token = env->GetMethodID(cb_cls, "onToken", "(Ljava/lang/String;)V");
     env->DeleteLocalRef(cb_cls);
     if (!on_token || env->ExceptionCheck()) {
+        native_log("[generate] callback method lookup failed");
         env->ExceptionClear();
         g_history.pop_back();
         return JNI_FALSE;
@@ -269,9 +327,14 @@ Java_com_llmapp_Engine_generate(JNIEnv *env, jobject, jstring jprompt, jobject c
     std::string answer;
     answer.reserve(256);
 
+    native_log("[generate] sampling loop start");
     for (int step = 0; step < 2048 && !g_stop; ++step) {
         const llama_token tok = llama_sampler_sample(g_sampler, g_ctx, -1);
-        if (llama_vocab_is_eog(vocab, tok)) break;
+        if(step==0) native_log("[generate] first token sampled=%d",tok);
+        if (llama_vocab_is_eog(vocab, tok)) {
+            native_log("[generate] EOG at step=%d",step);
+            break;
+        }
         llama_sampler_accept(g_sampler, tok);
 
         char piece[16384];
@@ -300,6 +363,7 @@ Java_com_llmapp_Engine_generate(JNIEnv *env, jobject, jstring jprompt, jobject c
             break;
         }
 
+        if (step>0 && step%100==0) native_log("[generate] generated steps=%d answer_bytes=%zu cache=%zu",step,answer.size(),g_cached_tokens.size());
         if (g_cached_tokens.size() >= 4095) {
             g_stop = true;
             break;
@@ -326,11 +390,13 @@ Java_com_llmapp_Engine_generate(JNIEnv *env, jobject, jstring jprompt, jobject c
         g_cached_tokens.push_back(tok);
     }
 
+    native_log("[generate] loop finished stop=%d answer_bytes=%zu cache=%zu",g_stop.load(),answer.size(),g_cached_tokens.size());
     if (g_stop) {
         g_history.pop_back();
         return JNI_FALSE;
     }
     g_history.push_back({"assistant", answer});
+    native_log("[generate] success answer_bytes=%zu history=%zu",answer.size(),g_history.size());
     return JNI_TRUE;
 }
 
