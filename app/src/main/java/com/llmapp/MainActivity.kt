@@ -146,6 +146,10 @@ private fun ChatScreen(engine:Engine,logDir:File){
     var loaded by remember{mutableStateOf(false)}
     var generating by remember{mutableStateOf(false)}
     var current by remember{mutableStateOf("")}
+    var thinking by remember{mutableStateOf("")}
+    var thinkingActive by remember{mutableStateOf(false)}
+    var thinkingDone by remember{mutableStateOf(false)}
+    var streamBuffer by remember{mutableStateOf("")}
     val list=rememberLazyListState()
 
     val picker=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()){uri:Uri?->
@@ -180,17 +184,59 @@ private fun ChatScreen(engine:Engine,logDir:File){
             Button(onClick={
                 if(generating){engine.stop();return@Button}
                 val prompt=input.trim();if(prompt.isEmpty()||!loaded)return@Button
-                input="";messages.add(Message(true,prompt));current="";generating=true
+                input="";messages.add(Message(true,prompt));current="";thinking="";thinkingActive=false;thinkingDone=false;streamBuffer="";generating=true
                 scope.launch(Dispatchers.IO){
                     try{
                         engine.log("========== NEW ENTRY ==========")
                         engine.log("[ui] send prompt length=${prompt.length}")
                         val ok=engine.generate(prompt,TokenCallback{token->
-                            scope.launch(Dispatchers.Main){current+=token}
+                            scope.launch(Dispatchers.Main){
+                                streamBuffer += token
+                                var again = true
+                                while(again){
+                                    again = false
+                                    if(!thinkingActive && !thinkingDone){
+                                        val starts = listOf("<think>", "<|think|>", "<|START_THINKING|>", "[THINK]")
+                                        val hit = starts.mapNotNull { tag -> streamBuffer.indexOf(tag).takeIf { it >= 0 }?.let { it to tag } }.minByOrNull { it.first }
+                                        if(hit != null){
+                                            val (idx, tag) = hit
+                                            if(idx > 0) current += streamBuffer.substring(0, idx)
+                                            streamBuffer = streamBuffer.substring(idx + tag.length)
+                                            thinkingActive = true
+                                            again = true
+                                        }else if(streamBuffer.length > 64){
+                                            current += streamBuffer.dropLast(32)
+                                            streamBuffer = streamBuffer.takeLast(32)
+                                        }
+                                    }else if(thinkingActive){
+                                        val ends = listOf("</think>", "<|/think|>", "<|END_THINKING|>", "[/THINK]", "[BEGIN FINAL RESPONSE]")
+                                        val hit = ends.mapNotNull { tag -> streamBuffer.indexOf(tag).takeIf { it >= 0 }?.let { it to tag } }.minByOrNull { it.first }
+                                        if(hit != null){
+                                            val (idx, tag) = hit
+                                            thinking += streamBuffer.substring(0, idx)
+                                            streamBuffer = streamBuffer.substring(idx + tag.length)
+                                            thinkingActive = false
+                                            thinkingDone = true
+                                            again = true
+                                        }else if(streamBuffer.length > 64){
+                                            thinking += streamBuffer.dropLast(32)
+                                            streamBuffer = streamBuffer.takeLast(32)
+                                        }
+                                    }else{
+                                        current += streamBuffer
+                                        streamBuffer = ""
+                                    }
+                                }
+                            }
                         })
                         engine.log("[ui] generate returned=$ok")
                         launch(Dispatchers.Main){
+                            current += streamBuffer
+                            streamBuffer = ""
+                            if(thinkingActive) thinkingActive = false
+                            if(thinking.isNotEmpty()) messages.add(Message(false,"THINKING::"+thinking))
                             if(current.isNotEmpty())messages.add(Message(false,current))
+                            thinking=""; thinkingActive=false; thinkingDone=false
                             current="";generating=false
                             if(!ok)messages.add(Message(false,"Geração interrompida ou falhou."))
                         }
