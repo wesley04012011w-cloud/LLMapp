@@ -242,6 +242,7 @@ Java_com_llmapp_Engine_loadModel(JNIEnv *env, jobject, jstring jpath) {
     llama_sampler_chain_add(g_sampler, llama_sampler_init_top_k(40));
     llama_sampler_chain_add(g_sampler, llama_sampler_init_top_p(0.95f, 1));
     llama_sampler_chain_add(g_sampler, llama_sampler_init_temp(0.7f));
+    llama_sampler_chain_add(g_sampler, llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
     native_log("[load] sampler initialized; model ready");
     return JNI_TRUE;
 }
