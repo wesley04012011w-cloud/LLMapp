@@ -32,7 +32,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private data class Message(val user:Boolean,val text:String)
+private data class Message(val user:Boolean,val text:String,val thinking:String="")
 
 private class Engine {
     init { System.loadLibrary("llmapp") }
@@ -93,9 +93,13 @@ class MainActivity:ComponentActivity(){
         }
 
         setContent{
-            MaterialTheme(colorScheme=darkColorScheme(
-                background=Color(0xFF0B0B0C),surface=Color(0xFF151517),
-                onBackground=Color(0xFFE8E8E8),onSurface=Color(0xFFE8E8E8)
+            MaterialTheme(colorScheme=lightColorScheme(
+                background=Color.White,
+                surface=Color.White,
+                onBackground=Color.Black,
+                onSurface=Color.Black,
+                primary=Color(0xFF6750A4),
+                onPrimary=Color.White
             )){ChatScreen(engine,logDir)}
         }
     }
@@ -203,10 +207,10 @@ private fun ChatScreen(engine:Engine,logDir:File){ // generation settings sheet 
             Modifier.fillMaxWidth().height(52.dp),
             verticalAlignment=Alignment.CenterVertically
         ){
-            IconButton(onClick={showSettings=true},enabled=!generating){
-                Icon(Icons.Default.Settings,contentDescription="Configurações de geração")
-            }
             Spacer(Modifier.weight(1f))
+            IconButton(onClick={showSettings=true},enabled=!generating){
+                Icon(Icons.Default.Settings,contentDescription="Configurações de geração",tint=Color.Black)
+            }
             FilledTonalIconButton(
                 onClick={picker.launch(arrayOf("application/octet-stream","application/x-gguf","*/*"))},
                 enabled=!generating
@@ -215,36 +219,46 @@ private fun ChatScreen(engine:Engine,logDir:File){ // generation settings sheet 
             }
         }
         LazyColumn(Modifier.weight(1f).fillMaxWidth(),state=list,verticalArrangement=Arrangement.spacedBy(10.dp),contentPadding=PaddingValues(vertical=12.dp)){
-            items(messages){m->Row(Modifier.fillMaxWidth(),horizontalArrangement=if(m.user)Arrangement.End else Arrangement.Start){
-                Surface(shape=RoundedCornerShape(18.dp),color=if(m.user)Color(0xFF242427)else Color(0xFF151517)){Text(m.text,Modifier.padding(14.dp))}
-            }}
-            if(thinking.isNotEmpty())item{
-                Surface(
-                    shape=RoundedCornerShape(14.dp),
-                    color=Color.White,
-                    contentColor=Color.Black
-                ){
-                    Column(Modifier.padding(horizontal=14.dp,vertical=10.dp)){
-                        Text(
-                            if(thinkingActive)"THINKING" else "THINKING",
-                            style=MaterialTheme.typography.labelSmall,
-                            color=Color.Black
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            thinking,
-                            color=Color.Black,
-                            style=MaterialTheme.typography.bodyMedium
-                        )
+            items(messages){m->
+                if(m.user){
+                    Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End){
+                        Surface(shape=RoundedCornerShape(18.dp),color=Color(0xFFF0F0F0),contentColor=Color.Black){
+                            Text(m.text,Modifier.padding(14.dp))
+                        }
+                    }
+                }else{
+                    Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(8.dp)){
+                        if(m.thinking.isNotEmpty()){
+                            Surface(shape=RoundedCornerShape(14.dp),color=Color(0xFFF5F5F5),contentColor=Color.Black){
+                                Column(Modifier.padding(horizontal=14.dp,vertical=10.dp)){
+                                    Text("THINKING",style=MaterialTheme.typography.labelSmall,color=Color.Black)
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(m.thinking,color=Color.Black,style=MaterialTheme.typography.bodyMedium)
+                                }
+                            }
+                        }
+                        if(m.text.isNotEmpty()){
+                            Text(m.text,Modifier.fillMaxWidth().padding(horizontal=2.dp,vertical=2.dp),color=Color.Black,style=MaterialTheme.typography.bodyLarge)
+                        }
                     }
                 }
             }
-            if(current.isNotEmpty())item{
-                Surface(shape=RoundedCornerShape(18.dp),color=Color(0xFF151517)){
-                    Text(current,Modifier.padding(14.dp),color=Color(0xFFE8E8E8))
+            if(thinking.isNotEmpty() || current.isNotEmpty()) item{
+                Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(8.dp)){
+                    if(thinking.isNotEmpty()){
+                        Surface(shape=RoundedCornerShape(14.dp),color=Color(0xFFF5F5F5),contentColor=Color.Black){
+                            Column(Modifier.padding(horizontal=14.dp,vertical=10.dp)){
+                                Text("THINKING",style=MaterialTheme.typography.labelSmall,color=Color.Black)
+                                Spacer(Modifier.height(4.dp))
+                                Text(thinking,color=Color.Black,style=MaterialTheme.typography.bodyMedium)
+                            }
+                        }
+                    }
+                    if(current.isNotEmpty()){
+                        Text(current,Modifier.fillMaxWidth().padding(horizontal=2.dp,vertical=2.dp),color=Color.Black,style=MaterialTheme.typography.bodyLarge)
+                    }
                 }
             }
-        }
         val sendEnabled=generating || (loaded && input.isNotBlank())
         TextField(
             value=input,
@@ -255,9 +269,12 @@ private fun ChatScreen(engine:Engine,logDir:File){ // generation settings sheet 
             enabled=!generating,
             shape=RoundedCornerShape(28.dp),
             colors=TextFieldDefaults.colors(
-                focusedContainerColor=Color(0xFF1A1A1D),
-                unfocusedContainerColor=Color(0xFF1A1A1D),
-                disabledContainerColor=Color(0xFF1A1A1D),
+                focusedContainerColor=Color(0xFFF2F2F2),
+                unfocusedContainerColor=Color(0xFFF2F2F2),
+                disabledContainerColor=Color(0xFFF2F2F2),
+                focusedTextColor=Color.Black,
+                unfocusedTextColor=Color.Black,
+                disabledTextColor=Color(0xFF777777),
                 focusedIndicatorColor=Color.Transparent,
                 unfocusedIndicatorColor=Color.Transparent,
                 disabledIndicatorColor=Color.Transparent
@@ -340,8 +357,11 @@ private fun ChatScreen(engine:Engine,logDir:File){ // generation settings sheet 
                                             if(thinkingActive)thinking+=streamBuffer else current+=streamBuffer
                                             streamBuffer=""
                                             thinkingActive=false
-                                            if(current.isNotEmpty())messages.add(Message(false,current))
+                                            if(current.isNotEmpty() || thinking.isNotEmpty()){
+                                                messages.add(Message(false,current,thinking))
+                                            }
                                             current=""
+                                            thinking=""
                                             generating=false
                                             if(!ok)messages.add(Message(false,"Geração interrompida ou falhou."))
                                         }
@@ -361,7 +381,8 @@ private fun ChatScreen(engine:Engine,logDir:File){ // generation settings sheet 
                 ){
                     Icon(
                         imageVector=if(generating)Icons.Default.Stop else Icons.Default.Send,
-                        contentDescription=if(generating)"Parar geração" else "Enviar mensagem"
+                        contentDescription=if(generating)"Parar geração" else "Enviar mensagem",
+                        tint=Color.Black
                     )
                 }
             }
