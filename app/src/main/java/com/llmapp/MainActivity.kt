@@ -143,6 +143,7 @@ private fun timestamp():String=SimpleDateFormat("yyyyMMdd-HHmmss-SSS",Locale.US)
 
 
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ChatScreen(engine:Engine,logDir:File){
     val context=androidx.compose.ui.platform.LocalContext.current

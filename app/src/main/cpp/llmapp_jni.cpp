@@ -79,6 +79,23 @@ static void clear_engine() {
     g_history.clear();
 }
 
+static bool rebuild_sampler() {
+    if (!g_model) return false;
+    if (g_sampler) {
+        llama_sampler_free(g_sampler);
+        g_sampler = nullptr;
+    }
+    llama_sampler_chain_params sp = llama_sampler_chain_default_params();
+    g_sampler = llama_sampler_chain_init(sp);
+    if (!g_sampler) return false;
+    llama_sampler_chain_add(g_sampler, llama_sampler_init_top_k(g_top_k));
+    llama_sampler_chain_add(g_sampler, llama_sampler_init_top_p(g_top_p, 1));
+    llama_sampler_chain_add(g_sampler, llama_sampler_init_min_p(g_min_p, 1));
+    llama_sampler_chain_add(g_sampler, llama_sampler_init_temp(g_temperature));
+    llama_sampler_chain_add(g_sampler, llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
+    return true;
+}
+
 static std::vector<llama_token> tokenize(const llama_vocab *vocab, const std::string &s, bool add_special) {
     int n = llama_tokenize(vocab, s.data(), (int)s.size(), nullptr, 0, add_special, true);
     if (n < 0) n = -n;
@@ -235,6 +252,9 @@ Java_com_llmapp_Engine_setGenerationSettings(JNIEnv *env, jobject, jfloat temper
             env->ReleaseStringUTFChars(jsystem, p);
         }
     }
+    if (g_model && g_ctx && !rebuild_sampler()) {
+        native_log("[settings] sampler rebuild failed");
+    }
     native_log("[settings] temp=%.3f top_p=%.3f top_k=%d min_p=%.3f max_tokens=%d jinja=%d system_bytes=%zu",
                g_temperature, g_top_p, g_top_k, g_min_p, g_max_tokens, g_use_jinja ? 1 : 0, g_system_prompt.size());
 }
@@ -288,18 +308,11 @@ Java_com_llmapp_Engine_loadModel(JNIEnv *env, jobject, jstring jpath) {
     }
     native_log("[load] context initialized");
 
-    llama_sampler_chain_params sp = llama_sampler_chain_default_params();
-    g_sampler = llama_sampler_chain_init(sp);
-    if (!g_sampler) {
-        native_log("[load] llama_sampler_chain_init returned null");
+    if (!rebuild_sampler()) {
+        native_log("[load] sampler initialization failed");
         clear_engine();
         return JNI_FALSE;
     }
-    llama_sampler_chain_add(g_sampler, llama_sampler_init_top_k(g_top_k));
-    llama_sampler_chain_add(g_sampler, llama_sampler_init_top_p(g_top_p, 1));
-    llama_sampler_chain_add(g_sampler, llama_sampler_init_min_p(g_min_p, 1));
-    llama_sampler_chain_add(g_sampler, llama_sampler_init_temp(g_temperature));
-    llama_sampler_chain_add(g_sampler, llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
 
     // Warm up the freshly-created context once.  This activates the model's
     // compute paths before the first real prompt, then clears the temporary
