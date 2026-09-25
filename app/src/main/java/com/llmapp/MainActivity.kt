@@ -65,20 +65,16 @@ class MainActivity:ComponentActivity(){
             val recovered=File(logDir,"crash-recovered-${timestamp()}.txt")
             try{
                 if(previousSession.renameTo(recovered)){
-                    Toast.makeText(this,"Falha da sessão anterior registrada em:
-${recovered.absolutePath}",Toast.LENGTH_LONG).show()
+                    Toast.makeText(this,"Falha da sessão anterior registrada em:\n${recovered.absolutePath}",Toast.LENGTH_LONG).show()
                 }
             }catch(_:Throwable){}
         }
 
         sessionLog=File(logDir,"session-active.txt")
         try{
-            sessionLog.writeText("========== SESSION START ==========
-started=${Date()}
-")
+            sessionLog.writeText("========== SESSION START ==========\nstarted=${Date()}\n")
         }catch(_:Throwable){}
-        Toast.makeText(this,"Logs do LLMapp serão salvos em:
-$logDirPath",Toast.LENGTH_LONG).show()
+        Toast.makeText(this,"Logs do LLMapp serão salvos em:\n$logDirPath",Toast.LENGTH_LONG).show()
         engine.initLogs(logDir.absolutePath)
         engine.startEntryLog(sessionLog.absolutePath)
         engine.log("[ui] session started")
@@ -88,10 +84,8 @@ $logDirPath",Toast.LENGTH_LONG).show()
         Thread.setDefaultUncaughtExceptionHandler{thread,error->
             try{
                 File(logDir,"crash-${timestamp()}.txt").writeText(
-                    "========== JAVA/KOTLIN CRASH ==========
-"+
-                    "thread=${thread.name}
-"+
+                    "========== JAVA/KOTLIN CRASH ==========\n"+
+                    "thread=${thread.name}\n"+
                     error.stackTraceToString()
                 )
             }catch(_:Throwable){}
@@ -139,8 +133,7 @@ $logDirPath",Toast.LENGTH_LONG).show()
             engine.log("[ui] activity destroyed")
             if(!isChangingConfigurations){
                 engine.log("[ui] clean shutdown")
-                sessionLog.appendText("========== CLEAN SHUTDOWN ==========
-")
+                sessionLog.appendText("========== CLEAN SHUTDOWN ==========\n")
                 sessionLog.delete()
             }
         }catch(_:Throwable){}
