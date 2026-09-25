@@ -65,16 +65,20 @@ class MainActivity:ComponentActivity(){
             val recovered=File(logDir,"crash-recovered-${timestamp()}.txt")
             try{
                 if(previousSession.renameTo(recovered)){
-                    Toast.makeText(this,"Falha da sessão anterior registrada em:\n${recovered.absolutePath}",Toast.LENGTH_LONG).show()
+                    Toast.makeText(this,"Falha da sessão anterior registrada em:
+${recovered.absolutePath}",Toast.LENGTH_LONG).show()
                 }
             }catch(_:Throwable){}
         }
 
         sessionLog=File(logDir,"session-active.txt")
         try{
-            sessionLog.writeText("========== SESSION START ==========\nstarted=${Date()}\n")
+            sessionLog.writeText("========== SESSION START ==========
+started=${Date()}
+")
         }catch(_:Throwable){}
-        Toast.makeText(this,"Logs do LLMapp serão salvos em:\n$logDirPath",Toast.LENGTH_LONG).show()
+        Toast.makeText(this,"Logs do LLMapp serão salvos em:
+$logDirPath",Toast.LENGTH_LONG).show()
         engine.initLogs(logDir.absolutePath)
         engine.startEntryLog(sessionLog.absolutePath)
         engine.log("[ui] session started")
@@ -84,8 +88,10 @@ class MainActivity:ComponentActivity(){
         Thread.setDefaultUncaughtExceptionHandler{thread,error->
             try{
                 File(logDir,"crash-${timestamp()}.txt").writeText(
-                    "========== JAVA/KOTLIN CRASH ==========\n"+
-                    "thread=${thread.name}\n"+
+                    "========== JAVA/KOTLIN CRASH ==========
+"+
+                    "thread=${thread.name}
+"+
                     error.stackTraceToString()
                 )
             }catch(_:Throwable){}
@@ -133,7 +139,8 @@ class MainActivity:ComponentActivity(){
             engine.log("[ui] activity destroyed")
             if(!isChangingConfigurations){
                 engine.log("[ui] clean shutdown")
-                sessionLog.appendText("========== CLEAN SHUTDOWN ==========\n")
+                sessionLog.appendText("========== CLEAN SHUTDOWN ==========
+")
                 sessionLog.delete()
             }
         }catch(_:Throwable){}
@@ -202,7 +209,8 @@ private fun ChatScreen(engine:Engine,logDir:File){ // generation settings sheet 
         }
     }
 
-    Surface(Modifier.fillMaxSize(),color=Color.White){\n    Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal=12.dp,vertical=8.dp)){
+    Surface(Modifier.fillMaxSize(),color=Color.White){
+    Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal=12.dp,vertical=8.dp)){
         Row(
             Modifier.fillMaxWidth().height(52.dp),
             verticalAlignment=Alignment.CenterVertically
@@ -388,7 +396,9 @@ private fun ChatScreen(engine:Engine,logDir:File){ // generation settings sheet 
                 }
             }
         )
-    }\n\n        if(showSettings){
+    }
+
+        if(showSettings){
             val sheetState=rememberModalBottomSheetState(skipPartiallyExpanded=true)
             ModalBottomSheet(
                 onDismissRequest={showSettings=false},
