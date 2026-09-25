@@ -202,7 +202,7 @@ private fun ChatScreen(engine:Engine,logDir:File){ // generation settings sheet 
         }
     }
 
-    Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal=12.dp,vertical=8.dp)){
+    Surface(Modifier.fillMaxSize(),color=Color.White){\n    Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal=12.dp,vertical=8.dp)){
         Row(
             Modifier.fillMaxWidth().height(52.dp),
             verticalAlignment=Alignment.CenterVertically
@@ -388,7 +388,7 @@ private fun ChatScreen(engine:Engine,logDir:File){ // generation settings sheet 
                 }
             }
         )
-        if(showSettings){
+    }\n\n        if(showSettings){
             val sheetState=rememberModalBottomSheetState(skipPartiallyExpanded=true)
             ModalBottomSheet(
                 onDismissRequest={showSettings=false},
